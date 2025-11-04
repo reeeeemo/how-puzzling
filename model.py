@@ -2,6 +2,7 @@ from ultralytics import YOLO
 import torch
 import torch.nn as nn
 import cv2
+import numpy as np
 
 class PuzzleImageModel(nn.Module):
     def __init__(self, model_name: str = "best.pt", device: str = "cpu"):
@@ -11,18 +12,66 @@ class PuzzleImageModel(nn.Module):
         self.device = device
         
     def forward(self, imgs):
-        results = self.model(imgs, verbose=False, imgsz=640)
-        return results
+        """
+            Forward pass of the model
+            Args:
+                img_paths: list of numpy arrays
+            Returns:
+                Cosine similarities of each detected object relative to the current image
+        """
+        results = self.model(imgs, verbose=False)
+        cropped = self.crop_images(results, imgs)
+
+        # get features from pre-detect layer
+        cropped_images = list(crop for (_,_, crop) in cropped)
+        feats = self.forward_until_layer(cropped_images, -2)
+        
+        # global avg pool + cosine similarity
+        global_avg_pool = torch.mean(feats, dim=[2,3]) # mean over width/height
+        
+        pooled = torch.nn.functional.normalize(global_avg_pool, dim=1)
+        sims = pooled @ pooled.T 
+                
+        return sims.cpu().numpy()
     
-    def forward_until_layer(self, imgs, layer: int):
-        # read all images, resize then normalize into tensors
-        all_imgs = []
-        for img_path in imgs:
-            img = cv2.imread(img_path)[:, :, ::-1] # bgr - rgb
-            img = cv2.resize(img, (640,640))
-            all_imgs.append((torch.from_numpy(img.copy()).permute(2,0,1).float() / 255.0))
+    def crop_images(self, results, imgs):
+        """
+            Crop the images per box/class
+            Args:
+                results: segmentation masks from model
+                imgs: list of numpy arrays
+            Returns:
+                List of tuples (img_idx, cls, crop)
+        """
+        cropped = []
+        for i, (result, img) in enumerate(zip(results, imgs)):
+            boxes = result.boxes.xyxy
+            classes = result.boxes.cls
             
-        batch = torch.stack(all_imgs).to(self.device)
+            h, w = img.shape[:2]
+            
+            # iterate over all boxes and classes
+            for (box, cls_val) in zip(boxes, classes):
+                # no boxes going out of screen
+                x1, y1, x2, y2 = map(int, box)
+                x1 = max(0, min(w-1, x1))
+                x2 = max(0, min(w, x2))
+                y1 = max(0, min(h-1,y1))
+                y2 = max(0, min(h,y2))
+                
+                if x2 <= x1 or y2 <= y1:
+                    continue # :<
+                
+                crop = img[y1:y2, x1:x2]
+                
+                crop_t = torch.from_numpy(cv2.resize(crop, (640,640))).permute(2,0,1).float() / 255.0
+                cropped.append((i, cls_val.item(), crop_t))
+                
+        return cropped
+                
+    def forward_until_layer(self, imgs, layer: int):
+        # resize all images and normalize into tensors
+        batch = torch.stack(imgs).to(self.device)
         
         features = []
         def hook_fn(module, input, output):
@@ -35,4 +84,4 @@ class PuzzleImageModel(nn.Module):
             _ = self.model(batch, verbose=False)
         hook.remove()
             
-        return features[1]
+        return features[0]
