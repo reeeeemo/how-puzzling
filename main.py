@@ -28,7 +28,7 @@ if __name__ == "__main__":
         image = cv2.resize(image, (640, 640)) 
         images.append(image)
         
-    # run our vision framework on each image to get cosine sim
+    # run the vision framework on each image to get cosine sim
     sims_np = model(images)
     plt.imshow(sims_np, cmap="viridis")
     plt.title("Piece-To-Piece Cosine Similarity")
