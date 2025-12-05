@@ -35,14 +35,65 @@ def clean_masks(masks, img_shape):
 ```
 
 # Why this sample size & Hypothesis
-A dataset consisting of larger puzzle pieces could seem difficult to a segmentation model due to the **colorful images** inside of each piece. These 4 images I have tested performed the worst in the entire dataset when segmenting under any conditions, and should yield a more informative result about the segmentation method.
+A dataset consisting of larger puzzle pieces could seem difficult to a segmentation model due to the detailed **colorful images** inside of each piece. These 4 images I have tested performed the worst in the entire dataset when segmenting under any conditions, and should yield a more informative result about the segmentation method.
 
-I have a couple of hypothesis' with the  segmentation methods that will be put to the test:
+I have a couple of hypothesis' with the segmentation methods that will be put to the test:
 - If we remove the color from images, we will see a much better segmentation result. 
 - SAM 2 will outperform SAM 3 given a set of bounding boxes.
-	+ [SAM 3 was build to find semantic masks](https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/). This differs from SAM 2, which will segment ANYTHING within the bounding box(es) provided (which will be our puzzle pieces). 
+	+ SAM 3 was built to find semantic masks [[1]]. This differs from SAM 2, which will segment ANYTHING within the bounding box(es) provided (which will be our puzzle pieces). 
 	+ As said earlier, with this method we could see puzzle pieces with larger objects inside of them perform worse than more finely detailed pieces. 
 
 # Results
 
-![Bbox_text](results_images/bbox_text.jpg)
+The tests I did were:
+- SAM 3 with a single bounding box in the current image + text as input
+    + [With color](./results_images/bbox_text.jpg)
+- SAM 3 with all bounding boxes in the current image as input
+    + [With color](./results_images/multi_bbox.jpg)
+    + [Grayscale](./results_images/multi_bbox_gray.jpg)
+    + [Only edges](./results_images/multi_bbox_edge.jpg)
+- SAM 3 with all bounding boxes in the current image + text as input
+    + [With color](./results_images/multi_bbox_text.jpg)
+- SAM 3 with a single bounding box in the curent image as input
+    + [With color](./results_images/one_bbox.jpg)
+    + [Grayscale](./results_images/multi_bbox_gray.jpg)
+    + [Only edges](./results_images/multi_bbox_edge.jpg)
++ SAM 2 with all bounding boxes in the current image as input
+    + [With color](./results_images/sam2_color.jpg)
+    + [Grayscale](./results_images/sam2.jpg)
+    + [Grayscale + CLAHE](./results_images/sam2_clahe.jpg)
++ SAM 3 with only text as input
+    + [With color](./results_images/text.jpg)
+    + [Grayscale](./results_images/text_gray.jpg)
+    + [Grayscale + CLAHE](./results_images/text_clahe.jpg)
+
+----
+**Grayscale vs. Edge Detecting**
+
+I found that grayscale **dramatically improves** the quality of segmentations inside of each mask, while using an edge detection filter actually **hurts** the quality.
+
+Why does this happen? My understanding is that the edge detection filter creates a binary/sparse map (low variance of active pixels), which hurts the quality since SAM models are trained on dense, natural RGB/Grayscale distributions. SAM's original paper specifically states "SAM was not trained to predict edge maps" [[2]]. This not only creates uncertainty amongst the structural information that the model already understands, but I am essentially asking the model to segment embeddings that it has never seen before in training.
+
+
+----
+
+**Why Grayscale?**
+
+Back to the grayscale, I mentioned previously that detailed and colorful images might harm my segmentation of puzzle pieces since I only want to focus on the geometry instead of the color inside the image for my segmentation purposes. From my findings, when a puzzle piece has internal edges or colors with high variance (e.g., a puzzle piece has a small photo of a wine bottle inside, bright red apple inside of a otherwise brown puzzle), this amplifies the noise within an embedding.
+
+
+
+I found that grayscale dulls the noise caused by color dramatically, which improved each segmentation **for my specific use case**. However if you view the grayscaled detections shown above, it still gets stuck on the internal edges of certain puzzle pieces.
+
+----
+
+**Improvements to Grayscale**
+
+TODO
+
+
+# References
+[1]: https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/
+[2]: https://arxiv.org/pdf/2304.02643 (7.2 / figure 10)
+[3]: https://pmc.ncbi.nlm.nih.gov/articles/PMC5148121/
+[4]: https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/

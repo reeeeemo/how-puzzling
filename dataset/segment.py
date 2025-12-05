@@ -13,23 +13,11 @@ from transformers import Sam2Processor, Sam2Model
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-def segment_images_text(model, processor, prompts: list[str], images: list[Image.Image]):
-    # process inputs then compute segmentation based on text prompts
-    inputs = processor(images=images, text=prompts, return_tensors="pt").to(DEVICE)
-
-    with torch.no_grad():
-        outputs = model(**inputs)
-    
-    # post process reults for images
-    results = processor.post_process_instance_segmentation(
-        outputs,
-        threshold=0.5,
-        mask_threshold=0.5,
-        target_sizes=inputs.get("original_sizes").tolist()
-    )
-    return results
-
-def segment_images_bbox(model, processor, images: list[Image.Image], labels: list[list[torch.Tensor]]):
+def segment_images_bbox(model, 
+                        processor, 
+                        images: list[Image.Image], 
+                        labels: list[list[torch.Tensor]],
+                        ver: str = "3"):
     # convert yolo format to pixel coords
 
     boxes = []
@@ -47,50 +35,58 @@ def segment_images_bbox(model, processor, images: list[Image.Image], labels: lis
         boxes.append(img_boxes) #  [x_min, y_min, x_max, y_max]
 
     results = []
-    with torch.no_grad():
-        for img, img_boxes in zip(images, boxes):
-            proc_out = processor(images=[img], input_boxes=[img_boxes], return_tensors="pt")
-            proc_out = {k: (v.to(DEVICE) if isinstance(v, torch.Tensor) else v) for k, v in proc_out.items()}
+    if ver == "2":
+        with torch.no_grad():
+            for img, img_boxes in zip(images, boxes):
+                proc_out = processor(images=[img], input_boxes=[img_boxes], return_tensors="pt")
+                proc_out = {k: (v.to(DEVICE) if isinstance(v, torch.Tensor) else v) for k, v in proc_out.items()}
 
-            outputs = model(**proc_out, multimask_output=False)
+                outputs = model(**proc_out, multimask_output=False)
 
-            target_sizes = proc_out["original_sizes"]
-            if isinstance(target_sizes, torch.Tensor):
-                target_sizes = target_sizes.cpu()
-            masks = processor.post_process_masks(outputs.pred_masks.cpu(), target_sizes)[0]
+                target_sizes = proc_out["original_sizes"]
+                if isinstance(target_sizes, torch.Tensor):
+                    target_sizes = target_sizes.cpu()
+                masks = processor.post_process_masks(outputs.pred_masks.cpu(), target_sizes)[0]
 
-            # normalize to (N, H, W)
-            if masks.dim() == 4:
-                masks = masks.squeeze(1)  # (N, 1, H, W) -> (N, H, W)
-            elif masks.dim() == 2:
-                masks = masks.unsqueeze(0)  # (H, W) -> (1, H, W)
+                # normalize to (N, H, W)
+                if masks.dim() == 4:
+                    masks = masks.squeeze(1)  # (N, 1, H, W) -> (N, H, W)
+                elif masks.dim() == 2:
+                    masks = masks.unsqueeze(0)  # (H, W) -> (1, H, W)
 
-            results.append(masks)
-    return results
+                results.append(masks)
+        return results
+    elif ver == "3":
+        prompts = ["puzzle" for _ in range(len(images))]
+        with torch.no_grad():
+            for img, prompt in zip(images, prompts):
+                proc_out = processor(images=[img], text=prompt, return_tensors="pt")
+                proc_out = {k: (v.to(DEVICE) if isinstance(v, torch.Tensor) else v) for k, v in proc_out.items()}
+                
+                outputs = model(**proc_out)
 
+                target_sizes = proc_out.get("original_sizes")
+                if isinstance(target_sizes, torch.Tensor):
+                    target_sizes = target_sizes.cpu().tolist()
 
-    ## boooo bad code
+                result = processor.post_process_instance_segmentation(
+                    outputs,
+                    threshold=0.5,
+                    mask_threshold=0.5,
+                    target_sizes=target_sizes
+                )
 
-    inputs = []
-    for img, img_boxes in zip(images, boxes):
-        inputs.append(
-            processor(images=[img], input_boxes=[img_boxes], return_tensors="pt").to(DEVICE)
-        ) #  text="puzzle" input_boxes=[img_boxes]
-    
-    results = []
-    with torch.no_grad():
-        for inp in inputs:
-            outputs = model(**inp)
-            #result = processor.post_process_instance_segmentation(
-            #    outputs,
-            #    threshold=0.5,
-            #    mask_threshold=0.5,
-            #    target_sizes=inp.get("original_sizes").tolist()
-            #)
-            masks = processor.post_process_masks(outputs.pred_masks.cpu(), inp["original_sizes"])[0]
-            results.append(masks) # not extend
-
-    return results
+                if result and "masks" in result[0]:
+                    masks = result[0]["masks"]
+                    if masks.dim() == 4:
+                        masks = masks.squeeze(1)
+                    elif masks.dim() == 2:
+                        masks = masks.unsqueeze(0)
+                    results.append(masks)
+                else:
+                    w, h = img.size
+                    results.append(torch.empty((0, h, w), dtype=torch.bool))
+        return results
 
 def overlay_masks(image, masks):
     image = image.convert("RGBA")
@@ -130,6 +126,7 @@ def clean_masks(masks, img_shape):
             clean_mask = np.zeros(img_shape, dtype=np.uint8)
             cv2.drawContours(clean_mask, [largest], 0, 255, -1)
             cleaned.append(torch.from_numpy(clean_mask > 0))
+            
     return torch.stack(cleaned) if cleaned else torch.empty((0, *img_shape), dtype=torch.bool)
 
 def main():
@@ -152,7 +149,7 @@ def main():
         images.append(image)
         labels.append(label)
 
-    all_masks = segment_images_bbox(model, processor, images, labels)
+    all_masks = segment_images_bbox(model, processor, images, labels, ver="2")
 
     ## with text prompts
     #half_i = len(dataset_list) // 2
@@ -168,7 +165,7 @@ def main():
 
         #cv2.imshow(f"Image {i}: {len(clean)} objects found", img_cv)
         if i in [4, 7, 20, 33]:
-            cv2.imwrite(f'data/example_images/image_{i}_sam2.jpg', img_cv)
+            cv2.imwrite(f'data/example_images/image_{i}_sam2_clahe.jpg', img_cv)
         #cv2.waitKey(0)
         #cv2.destroyAllWindows()
 

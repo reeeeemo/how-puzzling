@@ -5,6 +5,8 @@ from PIL import Image
 from pathlib import Path
 from glob import glob
 import warnings
+import cv2
+import numpy as np
 
 class PuzzleDataset(Dataset):
     def __init__(self, root_dir: str | Path, extension: str = "png", transform=None):
@@ -29,8 +31,17 @@ class PuzzleDataset(Dataset):
     def __getitem__(self, idx: int):
         # get image
         img_path = self.image_paths[idx]
-        image = Image.open(img_path).convert("L") #.convert("RGB") # 
-        image = image.resize((1920, 1080), Image.LANCZOS)
+        image = cv2.imread(img_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_LANCZOS4)
+        
+        # use contrast limited adaptive histogram equalization to improve contrast
+        # divides img into smaller parts and adjusts contrast seperately
+        clahe = cv2.createCLAHE(clipLimit=5) 
+        image = np.clip(clahe.apply(image) + 30, 0, 255).astype(np.uint8)
+
+        image = Image.fromarray(image) # convert back to PIL for transforms
 
         # get label
         label_path = self.label_paths[idx]
