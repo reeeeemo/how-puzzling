@@ -7,8 +7,8 @@ Utilizing [SAM 2](https://huggingface.co/facebook/sam2.1-hiera-base-plus) was my
 Note that I have excluded a couple of conditions, most notably: 
 - Tuning parameters (SAM3). These were kept at `threshold=0.5; mask_threshold=0.5`
 - Prompt Engineering (SAM3 introduced multimodality to their segmentation models, they recommend using nouns). I settled on the word `text="puzzle"` for this dataset
-- Mask cleaning (cleaning noise from segmentations, ex. "paint splatter" effect, getting largest segmentation if multiple segmentations in same box). The code I used for this will be below:
 - Each image is projected onto a single-color background. All images were gathered from [Jigsaw Explorer](https://www.jigsawexplorer.com/). Each puzzle ranges from 15-18 pieces.
+- Mask cleaning (cleaning noise from segmentations, ex. "paint splatter" effect, getting largest segmentation if multiple segmentations in same box). The code I used for this will be below:
 
 ```python
 def clean_masks(masks, img_shape):
@@ -68,32 +68,42 @@ The tests I did were:
     + [Grayscale + CLAHE](./results_images/text_clahe.jpg)
 
 ----
-**Grayscale vs. Edge Detecting**
+**Findings: Grayscale vs. Edge Detecting**
 
 I found that grayscale **dramatically improves** the quality of segmentations inside of each mask, while using an edge detection filter actually **hurts** the quality.
 
-Why does this happen? My understanding is that the edge detection filter creates a binary/sparse map (low variance of active pixels), which hurts the quality since SAM models are trained on dense, natural RGB/Grayscale distributions. SAM's original paper specifically states "SAM was not trained to predict edge maps" [[2]]. This not only creates uncertainty amongst the structural information that the model already understands, but I am essentially asking the model to segment embeddings that it has never seen before in training.
+Why does this happen? The edge detection filter, a laplacian filter, computes the second spatial derivative of an image. This results in a low variance of active pixels [[2]]. This hurts the quality since SAM models appear to be trained on dense, natural distributions. SAM's original paper specifically states "SAM was not trained to predict edge maps" [[3]] as well. 
 
+This creates uncertainty amongst the structural information that the model already understands. In essence, I am asking the model to segment embeddings that it has never seen before in training. My findings shown above can help to add to my hypothesis, where the more detail that a puzzle piece contains, the worse it does at segmenting.
 
 ----
 
 **Why Grayscale?**
 
-Back to the grayscale, I mentioned previously that detailed and colorful images might harm my segmentation of puzzle pieces since I only want to focus on the geometry instead of the color inside the image for my segmentation purposes. From my findings, when a puzzle piece has internal edges or colors with high variance (e.g., a puzzle piece has a small photo of a wine bottle inside, bright red apple inside of a otherwise brown puzzle), this amplifies the noise within an embedding.
+Back to the grayscale, I mentioned previously that detailed and colorful images might harm my segmentation of puzzle pieces since I only want to focus on the geometry instead of the color inside the image for my segmentation purposes. From my findings on the images posted above, when a puzzle piece has internal edges or colors with high variance (e.g., a puzzle piece has a small photo of a wine bottle inside, bright red apple inside of a otherwise brown puzzle), this amplifies the noise within an embedding.
 
 
-
-I found that grayscale dulls the noise caused by color dramatically, which improved each segmentation **for my specific use case**. However if you view the grayscaled detections shown above, it still gets stuck on the internal edges of certain puzzle pieces.
+I found that grayscale dulls the noise caused by color dramatically, which improved each segmentation **for my specific use case**. However if you view the grayscaled detections shown above, it still gets stuck on the internal edges of certain puzzle pieces (e.g., slices of bread, wine bottles, apples, cups).
 
 ----
 
 **Improvements to Grayscale**
 
-TODO
+The most interesting observation so far is that with some preprocessing, SAM 3 with a prompt like `"puzzle"` could be used as a way to gather polygons for my segmentation dataset without needing bounding boxes. You will notice that the SAM 2 experiment with grayscale and a technique called CLAHE and the text-based SAM 3 experiment under the same parameters performed equally the best. There are still some very small missing sections of the segmentation, but not enough to cause distress with the model we will be training the dataset on.
+
+Contrast Limited Adaptive Histogram Equalization, better known as CLAHE, improves the contrast of the image by dividing the image into smaller parts and adjusting the contrast seperately [[4]].
 
 
 # References
+1. Carion, Nicolas, et al. "Sam 3: Segment anything with concepts." arXiv preprint arXiv:2511.16719 (2025).
+2. OpenCV. (n.d.). OpenCV: Laplace Operator. Docs.opencv.org. https://docs.opencv.org/3.4/d5/db5/tutorial_laplace_operator.html
+3. Kirillov, Alexander, et al. "Segment anything." Proceedings of the IEEE/CVF international conference on computer vision. 2023.
+4. GeeksforGeeks. (2020, May 8). CLAHE Histogram Equalization OpenCV. GeeksforGeeks. https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/
+
+‌
+
+
 [1]: https://ai.meta.com/research/publications/sam-3-segment-anything-with-concepts/
-[2]: https://arxiv.org/pdf/2304.02643 (7.2 / figure 10)
-[3]: https://pmc.ncbi.nlm.nih.gov/articles/PMC5148121/
+[2]: https://docs.opencv.org/3.4/d5/db5/tutorial_laplace_operator.html
+[3]: https://arxiv.org/pdf/2304.02643 (7.2 / figure 10)
 [4]: https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/

@@ -133,41 +133,33 @@ def main():
     # tfloat32 for ampere gpus
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
-    #model = Sam3Model.from_pretrained("facebook/sam3").to(DEVICE)
-    #processor = Sam3Processor.from_pretrained("facebook/sam3")
-    model = Sam2Model.from_pretrained("facebook/sam2.1-hiera-base-plus").to(DEVICE)
-    processor = Sam2Processor.from_pretrained("facebook/sam2.1-hiera-base-plus")
+    model = Sam3Model.from_pretrained("facebook/sam3").to(DEVICE)
+    processor = Sam3Processor.from_pretrained("facebook/sam3")
+    #model = Sam2Model.from_pretrained("facebook/sam2.1-hiera-base-plus").to(DEVICE)
+    #processor = Sam2Processor.from_pretrained("facebook/sam2.1-hiera-base-plus")
     cwd = Path("") / "data" / "original_puzzle" # downloaded data name
 
     dataset = PuzzleDataset(cwd) # no transforms, just want the data
     dataset_list = [(img, lbl) for img, lbl in dataset]
-    ## with bbox
-    # half_i = len(dataset_list) // 2
     images, labels = [], []
 
     for image, label in dataset_list:
         images.append(image)
         labels.append(label)
 
-    all_masks = segment_images_bbox(model, processor, images, labels, ver="2")
+    all_masks = segment_images_bbox(model, processor, images, labels, ver="3")
 
-    ## with text prompts
-    #half_i = len(dataset_list) // 2
-    #images = [img for img, _ in dataset_list[0:half_i]]
-    #prompts = ["puzzle" for _ in range(half_i)]
-    #results = segment_images_text(model, processor, prompts, images)
-    
     for i, masks in enumerate(all_masks):
         w, h = images[i].size
         clean = clean_masks(masks, (h, w))
         overlaid = overlay_masks(images[i], clean)
         img_cv = cv2.cvtColor(np.array(overlaid), cv2.COLOR_RGBA2BGR)
 
-        #cv2.imshow(f"Image {i}: {len(clean)} objects found", img_cv)
-        if i in [4, 7, 20, 33]:
-            cv2.imwrite(f'data/example_images/image_{i}_sam2_clahe.jpg', img_cv)
-        #cv2.waitKey(0)
-        #cv2.destroyAllWindows()
+        cv2.imshow(f"Image {i}: {len(clean)} objects found", img_cv)
+        #if i in [4, 7, 20, 33]:
+        #    cv2.imwrite(f'data/example_images/image_{i}_sam2_clahe.jpg', img_cv)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
 if __name__ == "__main__":
     main()
