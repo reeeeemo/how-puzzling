@@ -7,7 +7,7 @@ import re
 def main():
     images = sorted(glob(str(Path("") / "data" / "example_images" / "**" / "*.jpg"), recursive=True))
 
-    # get all categories of images
+    # get all categories (experiments) of images
     categories = {}
     prev_num = "-1"
     for img in images:
@@ -15,6 +15,7 @@ def main():
         index = '_'.join(num[2:])
         categories.setdefault(index, []).append(img)
         
+    # create plot for every category that includes 4 images
     for cat in categories:
         fig, axes = plt.subplots(2,2, figsize=(24,24))
         axes = axes.ravel()

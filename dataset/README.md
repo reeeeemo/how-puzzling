@@ -91,7 +91,23 @@ I found that grayscale dulls the noise caused by color dramatically, which impro
 
 The most interesting observation so far is that with some preprocessing, SAM 3 with a prompt like `"puzzle"` could be used as a way to gather polygons for my segmentation dataset without needing bounding boxes. You will notice that the SAM 2 experiment with grayscale and a technique called CLAHE and the text-based SAM 3 experiment under the same parameters performed equally the best. There are still some very small missing sections of the segmentation, but not enough to cause distress with the model we will be training the dataset on.
 
-Contrast Limited Adaptive Histogram Equalization, better known as CLAHE, improves the contrast of the image by dividing the image into smaller parts and adjusting the contrast seperately [[4]].
+Contrast Limited Adaptive Histogram Equalization, better known as CLAHE, improves the contrast of the image by dividing the image into smaller parts and performs histogram equalization independently within each tile [[4]] [[5]]. This seems to sharpen the local features inside of each "bin", which includes the edges of every puzzle piece, but not as sharply as edge detection. 
+
+----
+
+**Final Remarks**
+
+Overall, this seems to result in the boost of performance from CLAHE + Grayscale to maintain and enhance texture + shape within every image. The most interesting observation is that SAM 3 experiment with a text prompt performed as well as the SAM 2 experiement with bounding boxes. This means instead of the limitation of manually annotating every puzzle piece with bounding boxes, I can focus on creating a larger and more diverse dataset by inputting every image into SAM 3 with the prompt `"puzzle"`.
+
+With all of this information, I have learned a few lessons from this experiment:
+- SAM 2 outperforms SAM 3 given a set of bounding boxes, 
+- SAM 2 with bounding boxes and SAM 3 with text input perform at a similar accuracy.
+- Preprocessing both with CLAHE + Grayscale boosts accuracy dramatically, enabling a more precise segmentation of all the puzzle pieces in an image.
+- Preprocessing using edge detection or another filter which creates a disruption in the natural distribution of an image lowers the accuracy given by the segmentation models.
+- Puzzle pieces which contains larger objects inside of them (sharper internal edges, higher color variance) creates difficulty for the segmentation model, resulting in a less accurate segmentation.
+
+
+Looks like for the most part my hypothesis was correct!
 
 
 # References
@@ -99,7 +115,11 @@ Contrast Limited Adaptive Histogram Equalization, better known as CLAHE, improve
 2. OpenCV. (n.d.). OpenCV: Laplace Operator. Docs.opencv.org. https://docs.opencv.org/3.4/d5/db5/tutorial_laplace_operator.html
 3. Kirillov, Alexander, et al. "Segment anything." Proceedings of the IEEE/CVF international conference on computer vision. 2023.
 4. GeeksforGeeks. (2020, May 8). CLAHE Histogram Equalization OpenCV. GeeksforGeeks. https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/
+5. Contrast Limited Adaptive Histogram Equalization (CLAHE). (2025). @Emergentmind. https://www.emergentmind.com/topics/contrast-limited-adaptive-histogram-equalization-clahe
 
+‌
+
+‌
 ‌
 
 
@@ -107,3 +127,4 @@ Contrast Limited Adaptive Histogram Equalization, better known as CLAHE, improve
 [2]: https://docs.opencv.org/3.4/d5/db5/tutorial_laplace_operator.html
 [3]: https://arxiv.org/pdf/2304.02643 (7.2 / figure 10)
 [4]: https://www.geeksforgeeks.org/python/clahe-histogram-eqalization-opencv/
+[5]: https://www.emergentmind.com/topics/contrast-limited-adaptive-histogram-equalization-clahe
