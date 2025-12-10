@@ -5,8 +5,8 @@ from transformers import Sam3Processor, Sam3Model
 from pathlib import Path
 from dataset import PuzzleDataset
 import numpy as np
-import matplotlib
 import cv2
+import warnings
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -111,33 +111,6 @@ def segment_images_bbox(model,
             results.append(masks)
     return results
 
-def overlay_masks(image: Image.Image, masks: list) -> Image.Image:
-    """
-        Given an image and a list of masks, overlay masks onto image
-        Args:
-            image: base image
-            masks: masks to overlay
-        Returns:
-            Image: image with masks overlayed
-    """
-    image = image.convert("RGBA")
-    masks = 255 * masks.cpu().numpy().astype(np.uint8)
-
-    n_masks = masks.shape[0]
-    cmap = matplotlib.colormaps.get_cmap("rainbow").resampled(n_masks)
-    colors = [
-        tuple(int(c * 255) for c in cmap(i)[:3])
-        for i in range(n_masks)
-    ]
-
-    for mask, color in zip(masks, colors):
-        mask = Image.fromarray(mask)
-        overlay = Image.new("RGBA", image.size, color + (0,))
-        alpha= mask.point(lambda v: int(v * 0.5))
-        overlay.putalpha(alpha)
-        image = Image.alpha_composite(image, overlay)
-    return image
-
 def clean_masks(masks: list, img_shape: tuple[int, int]) -> torch.Tensor:
     """
         Given a list of masks and image shape, clean noise and get largest segmentation if multiple in same box
@@ -168,7 +141,44 @@ def clean_masks(masks: list, img_shape: tuple[int, int]) -> torch.Tensor:
             
     return torch.stack(cleaned) if cleaned else torch.empty((0, *img_shape), dtype=torch.bool)
 
-def main():
+def mask_to_yolo_polygons(mask: np.ndarray, img_w: int, img_h: int):
+    """
+        Convert a binary mask to a list of YOLO-style normalized polygons
+        Args:
+            mask: mask to convert
+            img_w, img_h: image width and height
+        Returns:
+            polygons: list of polygons representing binary mask    
+    """
+    contours, _ = cv2.findContours(mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    polygons = []
+    for cnt in contours:
+        if len(cnt) < 3: # not enough outline pieces 
+            continue
+        # normalize to [0, 1]
+        poly = [(x[0][0] / img_w, x[0][1] / img_h) for x in cnt]
+        polygons.append(poly)
+    return polygons
+
+def polygons_to_yolo_lines(polygons, class_id: int = 0):
+    """
+        Flatten polygons into YOLO segmentation text lines
+        Args:
+            polygons: list of polygons representing a mask
+            class_id: class ID of that mask
+        Returns:
+            lines: list of polygons formatted for YOLO training
+    """
+    lines = []
+    for poly in polygons:
+        flat = " ".join([f"{x:.6f} {y:.6f}" for x, y in poly])
+        lines.append(f"{class_id} {flat}")
+    return lines
+
+def segment_all_images():
+    """
+        Segment all images inside of the downloaded dataset then save to a new generated dataset
+    """
     # tfloat32 for ampere gpus
     torch.backends.cuda.matmul.allow_tf32 = True
     torch.backends.cudnn.allow_tf32 = True
@@ -180,28 +190,56 @@ def main():
     # processor = Sam2Processor.from_pretrained("facebook/sam2.1-hiera-base-plus")
 
     cwd = Path("") / "data" / "original_puzzle" # downloaded data name
-    dataset = PuzzleDataset(cwd) # no transforms, just want the data
+    dataset = PuzzleDataset(cwd, gray=True, clahe=True) 
     dataset_list = [(img, lbl) for img, lbl in dataset]
-    images = []
-    # labels = []
+    images, labels = [], []
 
-    for image, _ in dataset_list:
+    for image, label in dataset_list:
         images.append(image)
-        # labels.append(label) # reword _ to label
+        labels.append(label) 
 
     # segment_images_bbox for bounding box
     all_masks = segment_images_prompt(model, processor, images, "puzzle")
 
+    # create output data file (yolo style)
+    output_dir = Path("") / "data" / "segmented_puzzle" 
+    labels_dir = output_dir / "labels" / "train"
+    images_dir = output_dir / "images" / "train"
+    labels_dir.mkdir(parents=True, exist_ok=True)
+    images_dir.mkdir(parents=True, exist_ok=True)
+
+    image_paths = dataset.get_image_paths()
+
+    # masks size guaranteed same as image and label size
     for i, masks in enumerate(all_masks):
-        # clean masks then overlay onto base image
+        # clean masks 
         w, h = images[i].size
         clean = clean_masks(masks, (h, w))
-        overlaid = overlay_masks(images[i], clean)
-        img_cv = cv2.cvtColor(np.array(overlaid), cv2.COLOR_RGBA2BGR)
+        new_img_path = images_dir / f"{Path(image_paths[i]).stem}.jpg"
+        
+        # reopen image without transforms
+        clean_img = cv2.imread(image_paths[i])
+        clean_img = cv2.resize(clean_img, (1920, 1080), interpolation=cv2.INTER_LANCZOS4)
+        
+        cv2.imwrite(str(new_img_path), clean_img)
 
-        cv2.imshow(f"Image {i}: {len(clean)} objects found", img_cv)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
+        yolo_lines = []
+        # masks size will be equal to # of labels and segmentations should be same as labels
+        if len(clean) != len(labels[i]):
+            warnings.warn(f"{new_img_path} labels is unequal. Segmented masks: {len(clean)}, Labels: {len(labels[i])}")
+            continue
+        if clean.numel() == 0: continue # skip empty tensors
+
+        for j in range(clean.shape[0]):
+            mask_np = clean[j].cpu().numpy().astype(np.uint8)
+            polys = mask_to_yolo_polygons(mask_np, w, h)
+            lines = polygons_to_yolo_lines(polys, class_id=labels[i][j].tolist()[0])
+            yolo_lines.extend(lines)
+
+        label_path = labels_dir / f"{Path(image_paths[i]).stem}.txt"
+        with open(label_path, "w") as f:
+            f.write("\n".join(yolo_lines))
+
 
 if __name__ == "__main__":
-    main()
+    segment_all_images()

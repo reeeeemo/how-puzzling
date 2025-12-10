@@ -9,6 +9,9 @@ import numpy as np
 
 from model import PuzzleImageModel
 
+###
+# gotta redo this
+###
 
 if __name__ == "__main__":
     cwd = Path("")

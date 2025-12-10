@@ -1,6 +1,5 @@
 import torch
-from torch.utils.data import Dataset, DataLoader
-from torchvision import transforms
+from torch.utils.data import Dataset
 from PIL import Image
 from pathlib import Path
 from glob import glob
@@ -9,7 +8,7 @@ import cv2
 import numpy as np
 
 class PuzzleDataset(Dataset):
-    def __init__(self, root_dir: str | Path, extension: str = "png", transform=None):
+    def __init__(self, root_dir: str | Path, extension: str = "png", gray: bool=False, clahe: bool = False):
         # get root dir and image / label paths
         self.root_dir = Path(root_dir)
         if not self.root_dir.exists():
@@ -22,9 +21,10 @@ class PuzzleDataset(Dataset):
             warnings.warn(f"Image ({len_image}) and Label ({len_lbl}) directories have unequal elements.")
         if not self.image_paths or not self.label_paths:
             warnings.warn(f"Image path exists: ({bool(self.image_paths)}). Label path exists ({bool(self.label_paths)})")
+        
+        self.gray = gray
+        self.clahe = clahe
 
-        self.transform = transform
-    
     def __len__(self):
         return len(self.image_paths)
     
@@ -33,13 +33,15 @@ class PuzzleDataset(Dataset):
         img_path = self.image_paths[idx]
         image = cv2.imread(img_path)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
-        image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        if self.gray:
+            image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_LANCZOS4)
         
         # use contrast limited adaptive histogram equalization to improve contrast
         # divides img into smaller parts and adjusts contrast seperately
-        clahe = cv2.createCLAHE(clipLimit=5) 
-        image = np.clip(clahe.apply(image) + 30, 0, 255).astype(np.uint8)
+        if self.clahe:
+            clahe = cv2.createCLAHE(clipLimit=5) 
+            image = np.clip(clahe.apply(image) + 30, 0, 255).astype(np.uint8)
 
         image = Image.fromarray(image) # convert back to PIL for transforms
 
@@ -47,8 +49,6 @@ class PuzzleDataset(Dataset):
         label_path = self.label_paths[idx]
         labels = []
 
-        # TODO: convert cls, cx, cy, w, h into pixel coords then apply transforms and convert back to normalized format
-        # assuming yolov8-v11 bounding box format
         try:
             with open(label_path, "r", encoding="utf-8") as f:
                 for line in f.readlines():
@@ -64,7 +64,7 @@ class PuzzleDataset(Dataset):
             warnings.warn(f"Unexpected error occured for file {label_path}: {e}")
             return image, []
 
-        if self.transform:
-            image = self.transform(image)
-
         return image, labels
+    
+    def get_image_paths(self):
+        return self.image_paths

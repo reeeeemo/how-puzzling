@@ -4,6 +4,10 @@ import torch.nn as nn
 import cv2
 import numpy as np
 
+###
+# gotta redo this
+###
+
 class PuzzleImageModel(nn.Module):
     def __init__(self, model_name: str = "best.pt", device: str = "cpu"):
         super().__init__()
