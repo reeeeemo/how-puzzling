@@ -177,7 +177,8 @@ def polygons_to_yolo_lines(polygons, class_id: int = 0):
 
 def segment_all_images():
     """
-        Segment all images inside of the downloaded dataset then save to a new generated dataset
+        Segment all images inside of the downloaded YOLO-style 
+        dataset then save to a new generated dataset
     """
     # tfloat32 for ampere gpus
     torch.backends.cuda.matmul.allow_tf32 = True
@@ -191,54 +192,58 @@ def segment_all_images():
 
     cwd = Path("") / "data" / "original_puzzle" # downloaded data name
     dataset = PuzzleDataset(cwd, gray=True, clahe=True) 
-    dataset_list = [(img, lbl) for img, lbl in dataset]
-    images, labels = [], []
-
-    for image, label in dataset_list:
-        images.append(image)
-        labels.append(label) 
-
-    # segment_images_bbox for bounding box
-    all_masks = segment_images_prompt(model, processor, images, "puzzle")
 
     # create output data file (yolo style)
     output_dir = Path("") / "data" / "segmented_puzzle" 
-    labels_dir = output_dir / "labels" / "train"
-    images_dir = output_dir / "images" / "train"
-    labels_dir.mkdir(parents=True, exist_ok=True)
-    images_dir.mkdir(parents=True, exist_ok=True)
 
-    image_paths = dataset.get_image_paths()
+    # get val / train data paths and compute images
+    splits = ["train", "val"]
+    all_images, all_masks = {}, {}
+    images_directories, labels_directories = {}, {}
+    images_paths = {}
+    for split in splits:
+        dataset.set_split(split)
+        # get all images preloaded from dataset class
+        all_images[split] = [img for img, _ in dataset] 
+        images_paths[split] = dataset.get_image_paths()
+
+
+        # segment with prompts, see dataset/README.md for details
+        all_masks[split] = segment_images_prompt(model, processor, all_images[split], "puzzle")
+
+        images_directories[split] = output_dir / "images" / split
+        images_directories[split].mkdir(parents=True, exist_ok=True)
+        labels_directories[split] = output_dir / "labels" / split
+        labels_directories[split].mkdir(parents=True, exist_ok=True)
+
+
 
     # masks size guaranteed same as image and label size
-    for i, masks in enumerate(all_masks):
-        # clean masks 
-        w, h = images[i].size
-        clean = clean_masks(masks, (h, w))
-        new_img_path = images_dir / f"{Path(image_paths[i]).stem}.jpg"
-        
-        # reopen image without transforms
-        clean_img = cv2.imread(image_paths[i])
-        clean_img = cv2.resize(clean_img, (1920, 1080), interpolation=cv2.INTER_LANCZOS4)
-        
-        cv2.imwrite(str(new_img_path), clean_img)
+    for split in splits:
+        for i, masks in enumerate(all_masks[split]):
+            # clean masks 
+            w, h = all_images[split][i].size
+            clean = clean_masks(masks, (h, w))
+            new_img_path = images_directories[split] / f"{Path(images_paths[split][i]).stem}.jpg"
+            
+            # reopen image without transforms
+            clean_img = cv2.imread(images_paths[split][i])
+            clean_img = cv2.resize(clean_img, (1920, 1080), interpolation=cv2.INTER_LANCZOS4)
+            
+            cv2.imwrite(str(new_img_path), clean_img)
 
-        yolo_lines = []
-        # masks size will be equal to # of labels and segmentations should be same as labels
-        if len(clean) != len(labels[i]):
-            warnings.warn(f"{new_img_path} labels is unequal. Segmented masks: {len(clean)}, Labels: {len(labels[i])}")
-            continue
-        if clean.numel() == 0: continue # skip empty tensors
+            yolo_lines = []
+            if clean.numel() == 0: continue # skip empty tensors
 
-        for j in range(clean.shape[0]):
-            mask_np = clean[j].cpu().numpy().astype(np.uint8)
-            polys = mask_to_yolo_polygons(mask_np, w, h)
-            lines = polygons_to_yolo_lines(polys, class_id=labels[i][j].tolist()[0])
-            yolo_lines.extend(lines)
+            for j in range(clean.shape[0]):
+                mask_np = clean[j].cpu().numpy().astype(np.uint8)
+                polys = mask_to_yolo_polygons(mask_np, w, h)
+                lines = polygons_to_yolo_lines(polys, class_id=0)
+                yolo_lines.extend(lines)
 
-        label_path = labels_dir / f"{Path(image_paths[i]).stem}.txt"
-        with open(label_path, "w") as f:
-            f.write("\n".join(yolo_lines))
+            label_path = labels_directories[split] / f"{Path(images_paths[split][i]).stem}.txt"
+            with open(label_path, "w") as f:
+                f.write("\n".join(yolo_lines))
 
 
 if __name__ == "__main__":
