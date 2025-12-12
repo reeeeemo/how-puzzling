@@ -106,6 +106,7 @@ With all of this information, I have learned a few lessons from this experiment:
 - Preprocessing using edge detection or another filter which creates a disruption in the natural distribution of an image lowers the accuracy given by the segmentation models.
 - Puzzle pieces which contains larger objects inside of them (sharper internal edges, higher color variance) creates difficulty for the segmentation model, resulting in a less accurate segmentation.
 
+> The output dataset can be found at https://huggingface.co/datasets/reeeemo/jigsaw_puzzle and follows the schema used by YOLO segmentation models. The images are resized to 1920x1080
 
 Looks like for the most part my hypothesis was correct!
 
