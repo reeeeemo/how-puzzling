@@ -10,23 +10,43 @@ import numpy as np
 class PuzzleDataset(Dataset):
     """
         Dataset of Jigsaw Puzzle pieces given a YOLO-style folder schema of
-        images and optional bounding box labels.
+        images and optional bounding box labels. 
+
+        Intended for inference and dataset generation, 
+        supports optional grayscale / CLAHE preprocessing.
+        
+        Attributes:
+            splits (list[str]): list of legal splits for dataset
+            current_split (str): active dataset split
+            root_dir (Path): root dataset directory
+            images (dict[str, list[str]]): image paths per split
+            labels (dict[str, list[str]]): labels paths per split
+            gray (bool): whether images are converted to grayscale
+            clahe (bool): whether CLAHE preprocessing is applied
     """
-    def __init__(self, root_dir: str | Path, extension: str = "png", gray: bool=False, clahe: bool = False):
+    def __init__(self, 
+            splits: list[str],
+            root_dir: str | Path, 
+            extension: str = "png", 
+            gray: bool=False, 
+            clahe: bool = False
+        ):
         # get root dir and image / label paths of train and val splits
         self.root_dir = Path(root_dir)
         if not self.root_dir.exists():
             warnings.warn(f"Root directory ({root_dir}) does not exist.")
 
-        self.images = {
-            "train": sorted(glob(str(self.root_dir / "images" / "train" / "**" / f"*.{extension}"), recursive=True)),
-            "val": sorted(glob(str(self.root_dir / "images" / "val" / "**" / f"*.{extension}"), recursive=True))
-        }
-        self.labels = {
-            "train": sorted(glob(str(self.root_dir / "labels" / "train" / "**" / "*.txt"), recursive=True)),
-            "val": sorted(glob(str(self.root_dir / "labels" / "val" / "**" / "*.txt"), recursive=True))
-        }
-        for split in ["train", "val"]:
+        # init all image and label paths for every split, check to ensure they exist / are equal
+        self.images, self.labels = {}, {}
+        self.splits = splits
+        for split in splits:
+            self.images[split] = sorted(
+                glob(str(self.root_dir / "images" / split / "**" / f"*.{extension}"), recursive=True)
+            )
+            self.labels[split] = sorted(
+                glob(str(self.root_dir / "labels" / split / "**" / "*.txt"), recursive=True)
+            )
+            
             img_path = self.images[split]
             lbl_path = self.labels[split]
             len_image, len_lbl = len(img_path), len(lbl_path)
@@ -43,17 +63,17 @@ class PuzzleDataset(Dataset):
         return len(self.images[self.current_split])
     
     def set_split(self, split: str = "train"):
-        if split not in ["train", "val"]:
+        """ Switches the active dataset split if legal """
+        if split not in self.splits:
             warnings.warn("Illegal split used.")
             return
         self.current_split = split
     
     def __getitem__(self, idx: int):
-        # get train image
         img_path = self.images[self.current_split][idx]
-        
         image = cv2.imread(img_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB) # openCV loads bgr by default
+
         if self.gray:
             image = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
         image = cv2.resize(image, (1920, 1080), interpolation=cv2.INTER_LANCZOS4)
@@ -70,7 +90,6 @@ class PuzzleDataset(Dataset):
 
         if (idx >= len(self.labels[self.current_split])):
             return image, []
-        # get label
         label_path = self.labels[self.current_split][idx]
         labels = []
 
@@ -91,5 +110,6 @@ class PuzzleDataset(Dataset):
 
         return image, labels
     
-    def get_image_paths(self):
+    def get_image_paths(self) -> list[str]:
+        """ Returns a list of image paths """
         return self.images[self.current_split]

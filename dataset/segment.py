@@ -190,14 +190,14 @@ def segment_all_images():
     # model = Sam2Model.from_pretrained("facebook/sam2.1-hiera-base-plus").to(DEVICE)
     # processor = Sam2Processor.from_pretrained("facebook/sam2.1-hiera-base-plus")
 
+    splits = ["train", "val"]
     cwd = Path("") / "data" / "original_puzzle" # downloaded data name
-    dataset = PuzzleDataset(cwd, gray=True, clahe=True) 
+    dataset = PuzzleDataset(root_dir=cwd, gray=True, clahe=True, splits=splits) 
 
     # create output data file (yolo style)
     output_dir = Path("") / "data" / "segmented_puzzle" 
 
     # get val / train data paths and compute images
-    splits = ["train", "val"]
     all_images, all_masks = {}, {}
     images_directories, labels_directories = {}, {}
     images_paths = {}
