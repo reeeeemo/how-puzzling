@@ -28,14 +28,17 @@ class PuzzleDataset(Dataset):
             splits: list[str],
             root_dir: str | Path, 
             extension: str = "png", 
-            gray: bool=False, 
+            gray: bool = False, 
             clahe: bool = False
         ):
         # get root dir and image / label paths of train and val splits
         self.root_dir = Path(root_dir)
         if not self.root_dir.exists():
             warnings.warn(f"Root directory ({root_dir}) does not exist.")
-
+        if len(splits) <= 0:
+            warnings.warn("Invalid splits given. Please instantiate with at least 1 split")
+            return
+        
         # init all image and label paths for every split, check to ensure they exist / are equal
         self.images, self.labels = {}, {}
         self.splits = splits
@@ -57,7 +60,7 @@ class PuzzleDataset(Dataset):
         
         self.gray = gray
         self.clahe = clahe
-        self.current_split = "train"
+        self.current_split = splits[0]
 
     def __len__(self):
         return len(self.images[self.current_split])

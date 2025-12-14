@@ -2,8 +2,8 @@
 dataset/data/*
 output/*
 metrics/*
-models/*
-
+model/model_outputs/*
+model/*.pt
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

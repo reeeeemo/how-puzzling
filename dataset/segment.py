@@ -3,10 +3,10 @@ from PIL import Image
 from transformers import Sam3Processor, Sam3Model
 # from transformers import Sam2Processor, Sam2Model # if we use SAM 2
 from pathlib import Path
-from dataset import PuzzleDataset
+from dataset.dataset import PuzzleDataset
 import numpy as np
 import cv2
-import warnings
+from utils.masks import clean_masks
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -111,36 +111,6 @@ def segment_images_bbox(model,
             results.append(masks)
     return results
 
-def clean_masks(masks: list, img_shape: tuple[int, int]) -> torch.Tensor:
-    """
-        Given a list of masks and image shape, clean noise and get largest segmentation if multiple in same box
-        Args:
-            masks: list of masks
-            img_shape: tuple of (height, width)
-        Returns:
-            torch.Tensor: tensor of cleaned masks
-    """
-    cleaned = []
-
-    for mask in masks:
-        mask_uint8 = (mask.cpu().numpy() * 255).astype(np.uint8)
-
-        # clean noise 
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5,5))
-        mask_clean = cv2.morphologyEx(mask_uint8, cv2.MORPH_CLOSE, kernel)
-        mask_clean = cv2.morphologyEx(mask_clean, cv2.MORPH_OPEN, kernel)
-
-        contours, _ = cv2.findContours(mask_clean, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        if contours:
-            largest = max(contours, key=cv2.contourArea) # get largest contour
-
-            clean_mask = np.zeros(img_shape, dtype=np.uint8)
-            cv2.drawContours(clean_mask, [largest], 0, 255, -1)
-            cleaned.append(torch.from_numpy(clean_mask > 0))
-            
-    return torch.stack(cleaned) if cleaned else torch.empty((0, *img_shape), dtype=torch.bool)
-
 def mask_to_yolo_polygons(mask: np.ndarray, img_w: int, img_h: int):
     """
         Convert a binary mask to a list of YOLO-style normalized polygons
@@ -187,15 +157,17 @@ def segment_all_images():
     # SAM 3 model
     model = Sam3Model.from_pretrained("facebook/sam3").to(DEVICE)
     processor = Sam3Processor.from_pretrained("facebook/sam3")
+    # SAM 2 model
     # model = Sam2Model.from_pretrained("facebook/sam2.1-hiera-base-plus").to(DEVICE)
     # processor = Sam2Processor.from_pretrained("facebook/sam2.1-hiera-base-plus")
 
     splits = ["train", "val"]
-    cwd = Path("") / "data" / "original_puzzle" # downloaded data name
+    proj_dir = Path(__file__).resolve().parent
+    cwd =  proj_dir / "data" / "original_puzzle" # downloaded data name
     dataset = PuzzleDataset(root_dir=cwd, gray=True, clahe=True, splits=splits) 
 
     # create output data file (yolo style)
-    output_dir = Path("") / "data" / "segmented_puzzle" 
+    output_dir = proj_dir / "data" / "segmented_puzzle" 
 
     # get val / train data paths and compute images
     all_images, all_masks = {}, {}
