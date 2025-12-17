@@ -3,3 +3,4 @@ torchvision --index-url https://download.pytorch.org/whl/cu129
 ultralytics
 opencv-python
 git+https://github.com/huggingface/transformers
+accelerate

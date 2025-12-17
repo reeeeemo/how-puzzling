@@ -21,7 +21,7 @@ def main():
             contour_np = np.array(c, dtype=np.int32)
             cv2.drawContours(new_img, [contour_np], -1, (0,255,0), thickness=3)
             
-        cv2.imshow("yolo output (cleaned)", new_img)
+        cv2.imshow("yolo output", new_img)
         cv2.waitKey(0)
         cv2.destroyAllWindows()
             
