@@ -27,9 +27,9 @@ My first idea was to use the local normal of the point(perpendicular to the tang
 
 Instead, I opted to solve this issue by using *polar coordinates*:
 
-> The first polar coordinate is the radial coordinate r, which is the distance of point P from the origin. The second polar coordinate is an angle $\phi$ that the radial vector makes with some chosen direction. [1]
+> The first polar coordinate is the radial coordinate r, which is the distance of point P from the origin. The second polar coordinate is an angle $\phi$ that the radial vector makes with some chosen direction. [[1]]
 
-Our origin in this case is the centroid $c$ of the polygon, found by calculating image moments of the polygon [2]. For each boundary point $p_i$, the radial vector and its unit direction are defined as:
+Our origin in this case is the centroid $c$ of the polygon, found by calculating image moments of the polygon [[2]]. For each boundary point $p_i$, the radial vector and its unit direction are defined as:
 
 $$\overrightarrow{r}_i= p_i - c,    \hat{r}_i = \frac{\overrightarrow{r}_i}{||\overrightarrow{r}_i||}$$
 
@@ -39,14 +39,17 @@ I can then assign the point to the side whose direction best aligns with $\hat{r
 
 $$ side(p_i) = arg\max_{s\in sides}\hat{r}_i \cdot s $$
 
-Both vectors are unit vectors since we normalized them, so our dot product is equivalent to the cosine of the angle between them (our second polar coordinate) [3].
+Both vectors are unit vectors since we normalized them, so our dot product is equivalent to the cosine of the angle between them (our second polar coordinate) [[3]].
 
-I show an output [here](./dataset/results_images/radial_masks.png).
+I have calculated an output [to this image output for the global process](./dataset/results_images/radial_masks.png).
 
-# References (TODO: cite these)
-1. https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)
-2. https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html
-3. https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product
+## References (TODO: cite these)
+
+1. Libretexts. (2024, October 1). 2.5: Coordinate systems and components of a vector (part 2). Physics LibreTexts. <https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)>
+2. Huamán, A. (n.d.). Goal. OpenCV. <https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html>
+3. Cosine Formula for Dot Product - ProofWiki. (2023). Proofwiki.org. <https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product>
+
+‌
 
 [1]: https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)
 [2]: https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html
