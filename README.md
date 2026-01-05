@@ -1,40 +1,53 @@
-similarities I tried:
+# Similarity Matching
 
-bbox similarity:
+## Bounding Box similarity:
+
 put text here
 
-segment similarity:
+## Segmentation similarity:
+
 put text here
 
-edge similarity:
+## Edge Similarity
 
-Our goal is to compute cosine similarity between every edge of a piece and all opposing edges. However, while we have the segments, we do not know the direction each (x, y) coordinate points towards.
+My goal is to compute cosine similarity between each edge of a piece and all opposing edges. To do this, I need a consistent way to assign each point $p_i = (x,y)$ to one of the four global sides (top, bottom, left, right) in image coordinates.
 
-To solve this, given a set of points of a polygon in image space, $pi = (x,y)$, we need to compute the global outward direction of each point. We are given the four cardinal directions as unit vectors:
+I will represent the four cardinal directions as unit vectors. All directions are defined in image coordinates, where the y-axis increases downwards:
 
-$$
+```python
 sides = {
     (0, 1), # bottom
     (0, -1), # top
     (-1, 0), # left
     (1, 0), # right
 }
-$$
+```
 
+My first idea was to use the local normal of the point(perpendicular to the tangent). [This is the result of my calculations](./dataset/results_images/normal_masks.png). As you can see, the flat edges produce the correct direction while any point in the tab/holes of a jigsaw puzzle piece assigns different directions.
 
-We can actually solve this issue by looking at the definition of polar coordinates:
+Instead, I opted to solve this issue by using *polar coordinates*:
 
 > The first polar coordinate is the radial coordinate r, which is the distance of point P from the origin. The second polar coordinate is an angle $\phi$ that the radial vector makes with some chosen direction. [1]
 
-Our origin in this case is the centroid of the polygon, found by calculating the moments of a shape [2]. This is better than using the normal of a point, as that will result in a local angle, which I have calculated [an example output](./dataset/results_images/normal_masks.png). 
+Our origin in this case is the centroid $c$ of the polygon, found by calculating image moments of the polygon [2]. For each boundary point $p_i$, the radial vector and its unit direction are defined as:
 
-Each point P is represented by our (x, y) coordinates, therefore our radial coordinate $r = p_i - centroid$.
+$$\overrightarrow{r}_i= p_i - c,    \hat{r}_i = \frac{\overrightarrow{r}_i}{||\overrightarrow{r}_i||}$$
 
 > To make up for the lack of points on straight edges using YOLO segmentations, I use the ordered polygon vertices to create a point per "step" of the mask if there is not a point already.
 
-Using our radial found, we can take our directions inputted as unit vectors to compute the greatest degree between our point and the origin (our centroid). This results in [a nicer output](./dataset/results_images/radial_masks.png)
+I can then assign the point to the side whose direction best aligns with $\hat{r}_i$
 
-tangent = pi+1 - pi-1
+$$ side(p_i) = arg\max_{s\in sides}\hat{r}_i \cdot s $$
+
+Both vectors are unit vectors since we normalized them, so our dot product is equivalent to the cosine of the angle between them (our second polar coordinate) [3].
+
+I show an output [here](./dataset/results_images/radial_masks.png).
+
+# References (TODO: cite these)
+1. https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)
+2. https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html
+3. https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product
 
 [1]: https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)
 [2]: https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html
+[3]: https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product
