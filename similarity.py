@@ -1,16 +1,13 @@
 from pathlib import Path
 import torch
-import matplotlib.pyplot as plt
 import numpy as np
 import cv2
-from scipy.stats import rankdata
-
 from model.model import PuzzleImageModel
 from dataset.dataset import PuzzleDataset
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
-def compute_similarites(model_path: Path, dataset_path: Path, split: str) -> tuple[torch.Tensor, list, dict[int, list], list[dict]]:
+def compute_similarites(model_path: Path, dataset_path: Path, split: str):
     """Get the similarity matrix of the requested split.
     
     Args:
@@ -18,10 +15,10 @@ def compute_similarites(model_path: Path, dataset_path: Path, split: str) -> tup
         dataset_path: path to dataset of images in YOLO format
          split: split to take images from
     Returns:
-        tuple of cosine similarity matrix,
+        tuple of (cosine similarity matrix,
         all images from split that was segmented,
         xyxy coords of boxes cropped relative to segmented masks
-        list of dicts tracking which piece/side for each edge crop
+        list of dicts tracking which piece/side for each edge crop).
     """
 
     model = PuzzleImageModel(model_name=str(model_path), device=DEVICE)
@@ -50,10 +47,8 @@ def visualize_edge_crop(crop, side_name, piece_id):
 
 def main():
     project_path = Path(__file__).resolve().parent
-    output = project_path / "output"
-    model_path = project_path / "model" / "model_outputs" / "train3" / "weights" / "best.pt"
+    model_path = project_path / "model" / "puzzle-segment-model" / "best.pt"
     dataset_path = project_path / "dataset" / "data" / "jigsaw_puzzle"
-    output.mkdir(exist_ok=True, parents=True)
 
 
     sims, images, boxes_per_image, edge_metadata = compute_similarites(model_path, dataset_path, "test")

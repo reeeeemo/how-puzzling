@@ -20,11 +20,11 @@ class PuzzleImageModel(nn.Module):
         super().__init__()
         torch.set_float32_matmul_precision("high")  # optimize matmuls
 
-        # download from (huggingface link here)
+        # download from (https://huggingface.co/reeeemo/puzzle-segment-model)
         self.model = YOLO(model_name).to(device)
         self.device = device
 
-        # does require gated access
+        # dinov3 requires gated access
         self.similarity_processor = AutoImageProcessor.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
         self.similarity_model = AutoModel.from_pretrained(
             "facebook/dinov3-vits16-pretrain-lvd1689m",
@@ -51,7 +51,7 @@ class PuzzleImageModel(nn.Module):
         return similarities, boxes_per_image, edge_metadata
 
 
-    def extract_all_edges(self, results, edge_width: int = 20) -> list[dict]:
+    def extract_all_edges(self, results, edge_width: int = 20) -> dict:
         """Extract each edge crop for all pieces.
         
         Args:
@@ -60,70 +60,143 @@ class PuzzleImageModel(nn.Module):
             list of dicts of piece idx, side type, and crop
         """
         edge_metadata = []
+
+        sides = {
+            "bottom": (0,1),
+            "top": (0,-1),
+            "left": (-1,0),
+            "right": (1,0)
+        }
         
-        piece_idx = 0
-        for result in results:
+        for result in results:  # all image segmentation results
             img = result.orig_img
             h, w = img.shape[:2]
-            
-            for mask in result.masks.data:
-                m = mask.detach().cpu().numpy()
-                mask_bin = (m>0.5).astype(np.uint8) * 255
-                if mask_bin.shape != (h,w):
-                    mask_bin = cv2.resize(mask_bin, (w,h), interpolation=cv2.INTER_NEAREST)
 
-                edges = self.extract_sides(mask_bin, img, edge_width=edge_width)
-                if edges is None:
+            piece_idx = 0
+            for poly in getattr(result.masks, "xy", []):  # for each polygon inside image
+                pts = np.asarray(poly, dtype=np.float32)    
+                if pts.size == 0:
                     continue
 
-                # validate then shrink to only whats needed to not add noise to cosim_mat
-                for side_name, edge_image in edges.items():
-                    if edge_image.size > 0 and edge_image.shape[0] > 0 and edge_image.shape[1] > 0:
-                        new_h, new_w = (224,edge_width) if side_name in ["top","bottom"] else (edge_width,224)
-                        edge_normalized = cv2.resize(edge_image, (new_h, new_w))
-                            
-                        edge_metadata.append({
-                            "piece_id": piece_idx,
-                            "side": side_name,
-                            "crop": edge_normalized
-                        })
+                pts = self.densify_polygons(pts, step=1.0)
+                pts[:, 0] = np.clip(pts[:, 0], 0, w-1)
+                pts[:, 1] = np.clip(pts[:, 1], 0, h-1)
+
+                # piece mask for crops
+                pts_i = np.rint(pts).astype(np.int32)
+                mask_piece = np.zeros((h, w), dtype=np.uint8)
+                cv2.fillPoly(mask_piece, [pts_i], 255)
+
+                # compute centroid using moments
+                mu = cv2.moments(pts_i.reshape(-1,1,2))
+                if mu.get("m00", 0) == 0:
+                    piece_idx += 1
+                    continue
+                centroid = np.array(
+                    [
+                        mu["m10"] / mu["m00"],
+                        mu["m01"] / mu["m00"]
+                    ],
+                    dtype=np.float64
+                )
+
+                new_pts = np.vstack([pts[-1:], pts, pts[:1]])  # cyclic
+                all_pts = {k: [] for k in sides.keys()}
+
+                for cur_pt in new_pts:
+                    radial = cur_pt - centroid  # radial vec
+                    rmag = np.linalg.norm(radial)
+                    if rmag < 1e-12:
+                        continue
+                    radial /= rmag
+
+                    # given all sides find the greatest degree
+                    # use radial for global relativity
+                    best_side, _ = max(
+                        ((name, float(np.dot(radial, np.asarray(side, dtype=np.float64)))) for name, side in sides.items()),
+                        key=lambda t: t[1]
+                    )
+                    all_pts[best_side].append(cur_pt)
+            
+                for side_name, pts_side in all_pts.items():
+                    if not pts_side:
+                        continue
+                    arr = np.asarray(pts_side)
+                    x_min, x_max = arr[:, 0].min(), arr[:, 0].max()
+                    y_min, y_max = arr[:, 1].min(), arr[:, 1].max()
+
+                    if side_name in ("top", "bottom"):
+                        center_y = int(y_min if side_name == "top" else y_max)
+                        y1 = max(0, center_y - edge_width)
+                        y2 = min(h, center_y + edge_width)
+                        x1 = int(max(0, np.floor(x_min)))
+                        x2 = int(min(w, np.ceil(x_max)))
+                    else:
+                        center_x = int(x_min if side_name == "left" else x_max)
+                        x1 = max(0, center_x - edge_width)
+                        x2 = min(w, center_x + edge_width)
+                        y1 = int(max(0, np.floor(y_min)))
+                        y2 = int(min(h, np.ceil(y_max)))
+                    
+                    if y2 <= y1 or x2 <= x1:
+                        continue
+
+                    crop = img[y1:y2, x1:x2].copy()
+                    mask_crop = mask_piece[y1:y2, x1:x2]
+                    if mask_crop.size == 0:
+                        continue
+
+                    mask_bin = (mask_crop > 0).astype(np.uint8) * 255
+                    crop = cv2.bitwise_and(crop, crop, mask=mask_bin)
+
+                    # normalize crop shape for embedding model
+                    try:
+                        if side_name in ("top", "bottom"):
+                            crop_resized = cv2.resize(crop, (224, edge_width))
+                        else:
+                            crop_resized = cv2.resize(crop, (edge_width, 224))
+                    except Exception:
+                        crop_resized = crop
+                    
+                    edge_metadata.append({
+                        "piece_id": piece_idx,
+                        "side": side_name,
+                        "crop": crop_resized,
+                        "coords": (x1, y1, x2, y2)
+                    })
                 piece_idx += 1
-        return edge_metadata   
+
+        return edge_metadata
 
 
-    def extract_sides(self, mask, img, edge_width=20) -> dict:
-        """Extract 4 edge regions of a puzzle piece (excluding tabs/knobs).
-        
+    def densify_polygons(self, pts, step: int = 1.0):
+        """Walk over each edge of polygon and add points.
+
         Args:
-            mask: binary segmentation mask
-            img: original image
-            edge_width (int): how many pixels inward from edge to sample
+            pts: sparse polygon points
+            step (int): number of pts to add over an edge
         Returns:
-            dict of 4 edge regions with their respective binary mask crop
+            numpy array of all points representing a polygon
         """
-        contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-        if not contours:
-            return None
+        dense = []
 
-        # approx a rectangle in the found contour
-        # https://www.pythonpool.com/cv2-boundingrect/
-        x, y, w, h = cv2.boundingRect(max(contours, key=cv2.contourArea))
-        edges = {}
-        edges["top"] = img[y:y+edge_width, x:x+w].copy()
-        edges["bottom"] = img[y+h-edge_width:y+h, x:x+w].copy()
-        edges["left"] = img[y:y+h, x:x+edge_width].copy()
-        edges["right"] = img[y:y+h, x+w-edge_width:x+w].copy()
+        for i in range(len(pts)):
+            p0 = pts[i]
+            p1 = pts[(i+1)%len(pts)]  # nxt point or 0
 
-        # crop it in the real image using a binary mask
-        for side_name, edge_crop in edges.items():
-            if side_name in ["top", "bottom"]:
-                mask_crop = mask[y:y+edge_width if side_name == "top" else y+h-edge_width:y+h, x:x+w]
-            else:
-                mask_crop = mask[y:y+h, x:x+edge_width if side_name=="left" else x+w-edge_width:x+w]
+            # get unit vector and decide how many pts to add
+            v = p1 - p0
+            length = np.linalg.norm(v)
+            if length < 1e-6:
+                continue
 
-            mask_crop = cv2.resize(mask_crop, (edge_crop.shape[1], edge_crop.shape[0]), interpolation=cv2.INTER_NEAREST)
-            edges[side_name] = cv2.bitwise_and(edge_crop, edge_crop, mask=mask_crop)
-        return edges 
+            direction = v / length
+            n = int(length // step)
+
+            for k in range(n+1):
+                dense.append(p0+direction*k*step)
+            dense.append(p1)
+        return np.asarray(dense)
 
 
     def compute_embeddings(self, imgs):
@@ -158,25 +231,6 @@ class PuzzleImageModel(nn.Module):
         sim_mat = torch.clamp(sim_mat, 0.0, 1.0)
         sim_mat.fill_diagonal_(1.0)
         return sim_mat
-
-
-    def crop_segmentations(self, results):
-        """UNUSED. TAKE OUT IF EDGE NO WORK
-        
-        basically crop segs instead of bboxes
-        """
-        crops = []
-        for r in results:
-            img = r.orig_img
-            h, w = img.shape[:2]
-            for mask in r.masks.data:
-                m = mask.detach().cpu().numpy()
-                mask_bin = (m > 0.5).astype(np.uint8) * 255
-                if mask_bin.shape != (h,w):
-                    mask_bin = cv2.resize(mask_bin, (w,h), interpolation=cv2.INTER_NEAREST)
-                cropped = cv2.bitwise_and(img, img, mask=mask_bin)
-                crops.append(cropped)
-        return crops
 
 
     def crop_images(self, results, imgs):

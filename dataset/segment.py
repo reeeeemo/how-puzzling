@@ -1,7 +1,7 @@
 import torch
 from PIL import Image
 from transformers import Sam3Processor, Sam3Model
-# from transformers import Sam2Processor, Sam2Model # if we use SAM 2
+# from transformers import Sam2Processor, Sam2Model  # if we use SAM 2
 from pathlib import Path
 from dataset.dataset import PuzzleDataset
 import numpy as np
@@ -14,15 +14,15 @@ def segment_images_prompt(model,
                         processor,
                         images: list[Image.Image],
                         prompt: str) -> list:
-    """
-        Segment images given a list of images and a text prompt
-        Args:
-            model: SAM 3 model
-            processor: SAM 3 processor
-            images: list of PIL images to segment
-            prompt: prompt for image segmentation
-        Returns:
-            list: masks for every image segmented
+    """Segment images given a list of images and a text prompt
+        
+    Args:
+        model: SAM 3 model
+        processor: SAM 3 processor
+        images: list of PIL images to segment
+        prompt: prompt for image segmentation
+    Returns:
+        list: masks for every image segmented
     """
     results = []
     with torch.no_grad():

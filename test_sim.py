@@ -8,6 +8,8 @@ from scipy.stats import rankdata
 from model.model import PuzzleImageModel
 from dataset.dataset import PuzzleDataset
 
+### put the code into similarity.py so this is kinda useless now lol ###
+
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 def compute(model_path: Path, dataset_path: Path, split: str):

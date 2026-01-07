@@ -2,8 +2,11 @@
 dataset/data/*
 output/*
 metrics/*
-model/model_outputs/*
-model/*.pt
+
+# anything thats in model except for the python files needed
+model/*
+!model/*.py
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
