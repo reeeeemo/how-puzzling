@@ -117,7 +117,10 @@ class PuzzleImageModel(nn.Module):
                         key=lambda t: t[1]
                     )
                     all_pts[best_side].append(cur_pt)
-            
+
+                ## this is where the crop is done, I will add and mention
+                # https://stackoverflow.com/questions/48301186/cropping-concave-polygon-from-image-using-opencv-python
+                ## to the crop later, since currently it is taking a "snapshot" of the image including the tabs/knobs, enforcing shape instead of texture
                 for side_name, pts_side in all_pts.items():
                     if not pts_side:
                         continue

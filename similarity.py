@@ -101,7 +101,6 @@ def main():
                 for rank, (_, match_meta, sim_score) in enumerate(compatible_sims[:5]):
                     match_piece_id = match_meta["piece_id"]
                     match_side = match_meta["side"]
-                    match_crop = match_meta["crop"]
                     
                     if match_piece_id >= len(boxes):
                         continue

@@ -9,6 +9,7 @@ from model.model import PuzzleImageModel
 from dataset.dataset import PuzzleDataset
 
 ### put the code into similarity.py so this is kinda useless now lol ###
+### maybe turn this into a visualizer like the desmos graph ###
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -55,7 +56,7 @@ def densify_polygons(pts, step=1.0):
 def main():
     project_path = Path(__file__).resolve().parent
     output = project_path / "output"
-    model_path = project_path / "model" / "model_outputs" / "train3" / "weights" / "best.pt"
+    model_path = project_path / "model" / "puzzle-segment-model" / "best.pt"
     dataset_path = project_path / "dataset" / "data" / "jigsaw_puzzle"
     output.mkdir(exist_ok=True, parents=True)
 
@@ -93,13 +94,12 @@ def main():
                     ],
                     dtype=np.float64
                 )
-                
+                cv2.circle(display, (int(centroid[0]), int(centroid[1])), 2, (255,255,255))                
                 # cyclic then find normals
                 new_pts = np.vstack([pts[-1:], pts, pts[:1]])
                 
                 #for i in range(len(new_pts)-2):
                 for cur_pt in new_pts:
-                    print(cur_pt)
                     # find distance from centroid to boundary point
                     radial = cur_pt - centroid
                     rmag = np.linalg.norm(radial)
