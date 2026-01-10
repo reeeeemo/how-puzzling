@@ -121,7 +121,7 @@ def main():
                     text_y = my1 + 20 + text_counts[match_piece_id]*25
                     text_counts[match_piece_id] += 1
                     
-                    cv2.putText(img, f"{edge_side}->{match_side}: {sim_score:.3f}", (mx1+5, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
+                    cv2.putText(img, f"target:{edge_side}->this:{match_side}: {sim_score:.3f}", (mx1+5, text_y), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2)
             
             if edge_crops_display:
                 max_height = img.shape[0]

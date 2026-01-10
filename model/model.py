@@ -45,13 +45,13 @@ class PuzzleImageModel(nn.Module):
             List of dicts tracking piece, side, and crop for every image.
         """
         results = self.model(imgs, verbose=False)
-        edge_metadata = self.extract_all_edges(results, edge_width=60)
+        edge_metadata = self.extract_all_edges(results, edge_width=30)
         boxes_per_image = self.crop_images(results, imgs)
         similarities = self.compute_similarities([data.get("crop") for data in edge_metadata])
         return similarities, boxes_per_image, edge_metadata
 
 
-    def extract_all_edges(self, results, edge_width: int = 20) -> dict:
+    def extract_all_edges(self, results, edge_width: int = 60) -> dict:
         """Extract each edge crop for all pieces.
         
         Args:
@@ -116,56 +116,80 @@ class PuzzleImageModel(nn.Module):
                         ((name, float(np.dot(radial, np.asarray(side, dtype=np.float64)))) for name, side in sides.items()),
                         key=lambda t: t[1]
                     )
-                    all_pts[best_side].append(cur_pt)
+                    all_pts[best_side].append((cur_pt, radial))
 
                 ## this is where the crop is done, I will add and mention
                 # https://stackoverflow.com/questions/48301186/cropping-concave-polygon-from-image-using-opencv-python
                 ## to the crop later, since currently it is taking a "snapshot" of the image including the tabs/knobs, enforcing shape instead of texture
-                for side_name, pts_side in all_pts.items():
-                    if not pts_side:
+                for side_name, pts_tuple in all_pts.items():
+                    if not pts_tuple or len(pts_tuple) < 2:
                         continue
-                    arr = np.asarray(pts_side)
-                    x_min, x_max = arr[:, 0].min(), arr[:, 0].max()
-                    y_min, y_max = arr[:, 1].min(), arr[:, 1].max()
-
-                    if side_name in ("top", "bottom"):
-                        center_y = int(y_min if side_name == "top" else y_max)
-                        y1 = max(0, center_y - edge_width)
-                        y2 = min(h, center_y + edge_width)
-                        x1 = int(max(0, np.floor(x_min)))
-                        x2 = int(min(w, np.ceil(x_max)))
-                    else:
-                        center_x = int(x_min if side_name == "left" else x_max)
-                        x1 = max(0, center_x - edge_width)
-                        x2 = min(w, center_x + edge_width)
-                        y1 = int(max(0, np.floor(y_min)))
-                        y2 = int(min(h, np.ceil(y_max)))
+                    pts_side = [pt for pt, _ in pts_tuple]
+                    radials = [r for _, r in pts_tuple]
                     
-                    if y2 <= y1 or x2 <= x1:
-                        continue
+                    #inner_points = [pt - radial * edge_width
+                    #                for pt, radial in zip(pts_side, radials)]
+                    inner_points = []
+                    for i in range(len(pts_side)):
+                        prev_i = (i-1) % len(pts_side)
+                        next_i = (i+1) % len(pts_side)
 
-                    crop = img[y1:y2, x1:x2].copy()
-                    mask_crop = mask_piece[y1:y2, x1:x2]
-                    if mask_crop.size == 0:
-                        continue
+                        tangent = pts_side[next_i] - pts_side[prev_i]
+                        tmag = np.linalg.norm(tangent)
 
-                    mask_bin = (mask_crop > 0).astype(np.uint8) * 255
-                    crop = cv2.bitwise_and(crop, crop, mask=mask_bin)
-
-                    # normalize crop shape for embedding model
-                    try:
-                        if side_name in ("top", "bottom"):
-                            crop_resized = cv2.resize(crop, (224, edge_width))
+                        if tmag < 1e-6:
+                            inward = -radials[i] * edge_width  # since our radials point outward, negate
                         else:
-                            crop_resized = cv2.resize(crop, (edge_width, 224))
-                    except Exception:
-                        crop_resized = crop
+                            tangent /= tmag
+                            # 90 degree rotation then flip signs if outward
+                            perp = np.array([-tangent[1], tangent[0]])
+                            if np.dot(perp, (centroid-pts_side[i])) < 0:
+                                perp = -perp
+
+                            inward = perp * edge_width
+                        inner_points.append(pts_side[i]+inward)
+
+                    strip_pts = np.array(pts_side + inner_points[::-1], dtype=np.int32)
+
+                    # this is causing the inward radial to be at the centroid, causing weird ass segmentations (fml)
+                    #for pt in strip_pts:
+                    #    cv2.circle(img, pt, 1, 255, 2)
+                    #cv2.imshow("image", img)
+                    #cv2.waitKey(0)
+                    #cv2.destroyAllWindows()
+
+                    # get bbox + clamp to image boundaries
+                    x_min, y_min = np.min(strip_pts, axis=0).astype(int)
+                    x_max, y_max = np.max(strip_pts, axis=0).astype(int)
+
+                    x_min = max(0, x_min)
+                    y_min = max(0, y_min)
+                    x_max = min(w, x_max)
+                    y_max = min(h, y_max)
+
+                    if x_max <= x_min or y_max <= y_min:
+                        continue
+
+                    # create mask then mask within piece mask to stay in piece
+                    mask = np.zeros((h, w), dtype=np.uint8)
+                    cv2.fillPoly(mask, [strip_pts], 255)
+                    mask = cv2.bitwise_and(mask, mask_piece)
                     
+                    # extract crop
+                    result_img = cv2.bitwise_and(img, img, mask=mask)
+                    cropped = result_img[y_min:y_max, x_min:x_max]
+                    mask_crop = mask[y_min:y_max, x_min:x_max]  # cleaner edges
+
+                    cropped = cv2.bitwise_and(cropped, cropped, mask=mask_crop)
+
+                    #cv2.imshow("crop example", cropped)
+                    #cv2.waitKey(0)
+                    #cv2.destroyAllWindows()
+
                     edge_metadata.append({
                         "piece_id": piece_idx,
                         "side": side_name,
-                        "crop": crop_resized,
-                        "coords": (x1, y1, x2, y2)
+                        "crop": cropped,
                     })
                 piece_idx += 1
 

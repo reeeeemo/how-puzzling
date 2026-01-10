@@ -52,6 +52,9 @@ I have calculated an output [to this image output for the global process](./data
 2. Huamán, A. (n.d.). Goal. OpenCV. <https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html>
 3. Cosine Formula for Dot Product - ProofWiki. (2023). Proofwiki.org. <https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product>
 
+some more citations I gotta look into:
+- https://www.cuemath.com/calculus/tangent-line/
+- https://dmpeli.math.mcmaster.ca/Matlab/Math4Q3/NumMethods/Lecture3-1.html
 ‌
 
 [1]: https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)
