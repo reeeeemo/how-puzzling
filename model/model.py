@@ -145,9 +145,9 @@ class PuzzleImageModel(nn.Module):
                                 perp = -perp
 
                         inner_points.append(pts_side[i]+perp*(edge_width//2))
-                        outer_points.append(pts_side[i]-perp*(edge_width//2))
+                        #outer_points.append(pts_side[i]-perp*(edge_width//2))
 
-                    strip_pts = np.array(outer_points + inner_points[::-1], dtype=np.int32)
+                    strip_pts = np.array(pts_side + inner_points[::-1], dtype=np.int32)
 
                     # get bbox + clamp to image boundaries
                     x_min, y_min = np.min(strip_pts, axis=0).astype(int)
