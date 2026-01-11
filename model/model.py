@@ -45,7 +45,7 @@ class PuzzleImageModel(nn.Module):
             List of dicts tracking piece, side, and crop for every image.
         """
         results = self.model(imgs, verbose=False)
-        edge_metadata = self.extract_all_edges(results, edge_width=30)
+        edge_metadata = self.extract_all_edges(results, edge_width=80)
         boxes_per_image = self.crop_images(results, imgs)
         similarities = self.compute_similarities([data.get("crop") for data in edge_metadata])
         return similarities, boxes_per_image, edge_metadata
@@ -118,18 +118,16 @@ class PuzzleImageModel(nn.Module):
                     )
                     all_pts[best_side].append((cur_pt, radial))
 
-                ## this is where the crop is done, I will add and mention
-                # https://stackoverflow.com/questions/48301186/cropping-concave-polygon-from-image-using-opencv-python
-                ## to the crop later, since currently it is taking a "snapshot" of the image including the tabs/knobs, enforcing shape instead of texture
+                ## this is where the crop is done
                 for side_name, pts_tuple in all_pts.items():
                     if not pts_tuple or len(pts_tuple) < 2:
                         continue
                     pts_side = [pt for pt, _ in pts_tuple]
                     radials = [r for _, r in pts_tuple]
                     
-                    #inner_points = [pt - radial * edge_width
-                    #                for pt, radial in zip(pts_side, radials)]
                     inner_points = []
+                    outer_points = []
+                    
                     for i in range(len(pts_side)):
                         prev_i = (i-1) % len(pts_side)
                         next_i = (i+1) % len(pts_side)
@@ -138,7 +136,7 @@ class PuzzleImageModel(nn.Module):
                         tmag = np.linalg.norm(tangent)
 
                         if tmag < 1e-6:
-                            inward = -radials[i] * edge_width  # since our radials point outward, negate
+                            perp = -radials[i]  # since our radials point outward, negate
                         else:
                             tangent /= tmag
                             # 90 degree rotation then flip signs if outward
@@ -146,17 +144,10 @@ class PuzzleImageModel(nn.Module):
                             if np.dot(perp, (centroid-pts_side[i])) < 0:
                                 perp = -perp
 
-                            inward = perp * edge_width
-                        inner_points.append(pts_side[i]+inward)
+                        inner_points.append(pts_side[i]+perp*(edge_width//2))
+                        outer_points.append(pts_side[i]-perp*(edge_width//2))
 
-                    strip_pts = np.array(pts_side + inner_points[::-1], dtype=np.int32)
-
-                    # this is causing the inward radial to be at the centroid, causing weird ass segmentations (fml)
-                    #for pt in strip_pts:
-                    #    cv2.circle(img, pt, 1, 255, 2)
-                    #cv2.imshow("image", img)
-                    #cv2.waitKey(0)
-                    #cv2.destroyAllWindows()
+                    strip_pts = np.array(outer_points + inner_points[::-1], dtype=np.int32)
 
                     # get bbox + clamp to image boundaries
                     x_min, y_min = np.min(strip_pts, axis=0).astype(int)
@@ -171,9 +162,19 @@ class PuzzleImageModel(nn.Module):
                         continue
 
                     # create mask then mask within piece mask to stay in piece
+                    kernel = np.ones((7,7), np.uint8)
+                    mask_piece_closed = cv2.morphologyEx(mask_piece, cv2.MORPH_CLOSE, kernel)
+                    
+                    # fix polygon artifacts
                     mask = np.zeros((h, w), dtype=np.uint8)
                     cv2.fillPoly(mask, [strip_pts], 255)
-                    mask = cv2.bitwise_and(mask, mask_piece)
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                    mask = cv2.bitwise_and(mask, mask_piece_closed) # old: mask_piece
+                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
+                    
+                    # dilate and erode for any extra artifacts
+                    mask = cv2.dilate(mask, kernel, iterations=2)
+                    mask = cv2.erode(mask, kernel, iterations=1)
                     
                     # extract crop
                     result_img = cv2.bitwise_and(img, img, mask=mask)
@@ -182,9 +183,9 @@ class PuzzleImageModel(nn.Module):
 
                     cropped = cv2.bitwise_and(cropped, cropped, mask=mask_crop)
 
-                    #cv2.imshow("crop example", cropped)
-                    #cv2.waitKey(0)
-                    #cv2.destroyAllWindows()
+                    cv2.imshow("crop example", cropped)
+                    cv2.waitKey(0)
+                    cv2.destroyAllWindows()
 
                     edge_metadata.append({
                         "piece_id": piece_idx,
