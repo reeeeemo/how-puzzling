@@ -122,11 +122,15 @@ class PuzzleImageModel(nn.Module):
                 for side_name, pts_tuple in all_pts.items():
                     if not pts_tuple or len(pts_tuple) < 2:
                         continue
+                    
                     pts_side = [pt for pt, _ in pts_tuple]
                     radials = [r for _, r in pts_tuple]
+                    print(f"Piece: {piece_idx}, Side: {side_name}: ")
+                    
+                    if self.is_flat_side(pts_side, epsilon=25, vertical=(side_name not in ["top", "bottom"])):
+                        continue
                     
                     inner_points = []
-                    outer_points = []
                     
                     for i in range(len(pts_side)):
                         prev_i = (i-1) % len(pts_side)
@@ -145,7 +149,6 @@ class PuzzleImageModel(nn.Module):
                                 perp = -perp
 
                         inner_points.append(pts_side[i]+perp*(edge_width//2))
-                        #outer_points.append(pts_side[i]-perp*(edge_width//2))
 
                     strip_pts = np.array(pts_side + inner_points[::-1], dtype=np.int32)
 
@@ -183,9 +186,9 @@ class PuzzleImageModel(nn.Module):
 
                     cropped = cv2.bitwise_and(cropped, cropped, mask=mask_crop)
 
-                    cv2.imshow("crop example", cropped)
-                    cv2.waitKey(0)
-                    cv2.destroyAllWindows()
+                    #cv2.imshow("crop example", cropped)
+                    #cv2.waitKey(0)
+                    #cv2.destroyAllWindows()
 
                     edge_metadata.append({
                         "piece_id": piece_idx,
@@ -195,6 +198,24 @@ class PuzzleImageModel(nn.Module):
                 piece_idx += 1
 
         return edge_metadata
+    
+    
+    def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
+        """Return True if side is flat, else false
+        
+        Args:
+            points: numpy array of (x,y) tuples
+            epsilon: Threshold for normalized max deviation
+            vertical: whether to compare y or x deviation
+        """
+        coord = 1 - int(vertical)
+        np_pts = np.array(points)
+        
+        min_val = np.min(np_pts[:, coord])
+        max_val = np.max(np_pts[:, coord])
+        side_range = max_val - min_val
+        
+        return side_range <= epsilon
 
 
     def densify_polygons(self, pts, step: int = 1.0):
@@ -288,12 +309,7 @@ class PuzzleImageModel(nn.Module):
                 if x2 <= x1 or y2 <= y1:
                     continue # boxes out of bounds
                 
-                #crop = img[y1:y2, x1:x2]
-                #crop_t = torch.from_numpy(cv2.resize(crop, (640,640))).permute(2,0,1).float() / 255.0
-                #all_crops.append(crop_t)
                 boxes_per_image[idx].append((x1, y1, x2, y2))
                 
-        #if not all_crops:
-        #    return boxes_per_image # torch.empty(0, 3, 640, 640), 
                         
         return boxes_per_image # torch.stack(all_crops), 
