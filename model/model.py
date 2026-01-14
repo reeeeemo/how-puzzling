@@ -8,7 +8,7 @@ from transformers import AutoImageProcessor, AutoModel
 
 class PuzzleImageModel(nn.Module):
     """Model that segments all individual jigsaw puzzle pieces in an image.
-    
+
     Computes cosine similarity between each piece's edges.
     Attributes:
         model: pretrained YOLO model to segment images with
@@ -25,7 +25,9 @@ class PuzzleImageModel(nn.Module):
         self.device = device
 
         # dinov3 requires gated access
-        self.similarity_processor = AutoImageProcessor.from_pretrained("facebook/dinov3-vits16-pretrain-lvd1689m")
+        self.similarity_processor = AutoImageProcessor.from_pretrained(
+            "facebook/dinov3-vits16-pretrain-lvd1689m"
+        )
         self.similarity_model = AutoModel.from_pretrained(
             "facebook/dinov3-vits16-pretrain-lvd1689m",
             dtype=torch.float16,
@@ -33,10 +35,13 @@ class PuzzleImageModel(nn.Module):
             attn_implementation="sdpa"
         )
 
-
-    def forward(self, imgs) -> tuple[torch.Tensor, dict[int, list], list[dict]]:
+    def forward(self, imgs) -> tuple[
+                                     torch.Tensor,
+                                     dict[int, list],
+                                     list[dict]
+                                    ]:
         """Segment and compute edge-to-edge similarity on all puzzle images.
-        
+
         Args:
             imgs: list of numpy arrays
         Returns:
@@ -47,13 +52,14 @@ class PuzzleImageModel(nn.Module):
         results = self.model(imgs, verbose=False)
         edge_metadata = self.extract_all_edges(results, edge_width=80)
         boxes_per_image = self.crop_images(results, imgs)
-        similarities = self.compute_similarities([data.get("crop") for data in edge_metadata])
+        similarities = self.compute_similarities(
+            [data.get("crop") for data in edge_metadata]
+        )
         return similarities, boxes_per_image, edge_metadata
-
 
     def extract_all_edges(self, results, edge_width: int = 60) -> dict:
         """Extract each edge crop for all pieces.
-        
+
         Args:
             results: YOLO segmentation results
         Returns:
@@ -62,19 +68,19 @@ class PuzzleImageModel(nn.Module):
         edge_metadata = []
 
         sides = {
-            "bottom": (0,1),
-            "top": (0,-1),
-            "left": (-1,0),
-            "right": (1,0)
+            "bottom": (0, 1),
+            "top": (0, -1),
+            "left": (-1, 0),
+            "right": (1, 0)
         }
-        
+
         for result in results:  # all image segmentation results
             img = result.orig_img
             h, w = img.shape[:2]
 
             piece_idx = 0
-            for poly in getattr(result.masks, "xy", []):  # for each polygon inside image
-                pts = np.asarray(poly, dtype=np.float32)    
+            for poly in getattr(result.masks, "xy", []):
+                pts = np.asarray(poly, dtype=np.float32)
                 if pts.size == 0:
                     continue
 
@@ -88,7 +94,7 @@ class PuzzleImageModel(nn.Module):
                 cv2.fillPoly(mask_piece, [pts_i], 255)
 
                 # compute centroid using moments
-                mu = cv2.moments(pts_i.reshape(-1,1,2))
+                mu = cv2.moments(pts_i.reshape(-1, 1, 2))
                 if mu.get("m00", 0) == 0:
                     piece_idx += 1
                     continue
@@ -113,25 +119,34 @@ class PuzzleImageModel(nn.Module):
                     # given all sides find the greatest degree
                     # use radial for global relativity
                     best_side, _ = max(
-                        ((name, float(np.dot(radial, np.asarray(side, dtype=np.float64)))) for name, side in sides.items()),
+                        ((
+                          name,
+                          float(np.dot(radial,
+                                       np.asarray(side, dtype=np.float64)))
+                          ) for name, side in sides.items()
+                         ),
                         key=lambda t: t[1]
                     )
                     all_pts[best_side].append((cur_pt, radial))
 
-                ## this is where the crop is done
+                # this is where the crop is done
                 for side_name, pts_tuple in all_pts.items():
                     if not pts_tuple or len(pts_tuple) < 2:
                         continue
-                    
+
                     pts_side = [pt for pt, _ in pts_tuple]
                     radials = [r for _, r in pts_tuple]
-                    print(f"Piece: {piece_idx}, Side: {side_name}: ")
-                    
-                    if self.is_flat_side(pts_side, epsilon=25, vertical=(side_name not in ["top", "bottom"])):
+
+                    if self.is_flat_side(pts_side,
+                                         epsilon=25,
+                                         vertical=(
+                                             side_name not in ["top", "bottom"]
+                                             )
+                                         ):
                         continue
-                    
+
                     inner_points = []
-                    
+
                     for i in range(len(pts_side)):
                         prev_i = (i-1) % len(pts_side)
                         next_i = (i+1) % len(pts_side)
@@ -140,7 +155,7 @@ class PuzzleImageModel(nn.Module):
                         tmag = np.linalg.norm(tangent)
 
                         if tmag < 1e-6:
-                            perp = -radials[i]  # since our radials point outward, negate
+                            perp = -radials[i]  # rough inward point calc
                         else:
                             tangent /= tmag
                             # 90 degree rotation then flip signs if outward
@@ -150,7 +165,8 @@ class PuzzleImageModel(nn.Module):
 
                         inner_points.append(pts_side[i]+perp*(edge_width//2))
 
-                    strip_pts = np.array(pts_side + inner_points[::-1], dtype=np.int32)
+                    strip_pts = np.array(pts_side + inner_points[::-1],
+                                         dtype=np.int32)
 
                     # get bbox + clamp to image boundaries
                     x_min, y_min = np.min(strip_pts, axis=0).astype(int)
@@ -165,30 +181,28 @@ class PuzzleImageModel(nn.Module):
                         continue
 
                     # create mask then mask within piece mask to stay in piece
-                    kernel = np.ones((7,7), np.uint8)
-                    mask_piece_closed = cv2.morphologyEx(mask_piece, cv2.MORPH_CLOSE, kernel)
-                    
+                    kernel = np.ones((7, 7), np.uint8)
+                    mask_piece_closed = cv2.morphologyEx(mask_piece,
+                                                         cv2.MORPH_CLOSE,
+                                                         kernel)
+
                     # fix polygon artifacts
                     mask = np.zeros((h, w), dtype=np.uint8)
                     cv2.fillPoly(mask, [strip_pts], 255)
                     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-                    mask = cv2.bitwise_and(mask, mask_piece_closed) # old: mask_piece
+                    mask = cv2.bitwise_and(mask, mask_piece_closed)
                     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-                    
+
                     # dilate and erode for any extra artifacts
                     mask = cv2.dilate(mask, kernel, iterations=2)
                     mask = cv2.erode(mask, kernel, iterations=1)
-                    
+
                     # extract crop
                     result_img = cv2.bitwise_and(img, img, mask=mask)
                     cropped = result_img[y_min:y_max, x_min:x_max]
                     mask_crop = mask[y_min:y_max, x_min:x_max]  # cleaner edges
 
                     cropped = cv2.bitwise_and(cropped, cropped, mask=mask_crop)
-
-                    #cv2.imshow("crop example", cropped)
-                    #cv2.waitKey(0)
-                    #cv2.destroyAllWindows()
 
                     edge_metadata.append({
                         "piece_id": piece_idx,
@@ -198,11 +212,10 @@ class PuzzleImageModel(nn.Module):
                 piece_idx += 1
 
         return edge_metadata
-    
-    
+
     def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
         """Return True if side is flat, else false
-        
+
         Args:
             points: numpy array of (x,y) tuples
             epsilon: Threshold for normalized max deviation
@@ -210,13 +223,12 @@ class PuzzleImageModel(nn.Module):
         """
         coord = 1 - int(vertical)
         np_pts = np.array(points)
-        
+
         min_val = np.min(np_pts[:, coord])
         max_val = np.max(np_pts[:, coord])
         side_range = max_val - min_val
-        
-        return side_range <= epsilon
 
+        return side_range <= epsilon
 
     def densify_polygons(self, pts, step: int = 1.0):
         """Walk over each edge of polygon and add points.
@@ -231,7 +243,7 @@ class PuzzleImageModel(nn.Module):
 
         for i in range(len(pts)):
             p0 = pts[i]
-            p1 = pts[(i+1)%len(pts)]  # nxt point or 0
+            p1 = pts[(i+1) % len(pts)]  # nxt point or 0
 
             # get unit vector and decide how many pts to add
             v = p1 - p0
@@ -247,7 +259,6 @@ class PuzzleImageModel(nn.Module):
             dense.append(p1)
         return np.asarray(dense)
 
-
     def compute_embeddings(self, imgs):
         """Compute embeddings of an image using the encoder.
         Args:
@@ -256,24 +267,30 @@ class PuzzleImageModel(nn.Module):
             dict of results from encoder.
         """
         with torch.no_grad():
-            inputs = self.similarity_processor(images=imgs, return_tensors="pt").to(self.device)
+            inputs = self.similarity_processor(
+                images=imgs,
+                return_tensors="pt"
+            ).to(self.device)
+
+            inputs = inputs.to(self.device)
             outputs = self.similarity_model(**inputs)
 
         return outputs
 
-
     def compute_similarities(self, imgs):
-        """
-            Compute a similarity matrix of multiple images using cosine similarity
-            Args:
-                imgs: list of numpy arrays
-            Returns:
-                Tensor of img-to-img cosine similarities
+        """Compute a similarity matrix of multiple images using cosine
+        similarity.
+
+        Args:
+            imgs: list of numpy arrays
+        Returns:
+            Tensor of img-to-img cosine similarities
         """
         outputs = self.compute_embeddings(imgs)
-        image_feats = outputs.last_hidden_state[:, 0, :]  # dinov3 has overall cls embedding
+        # dinov3 has overall cls embedding
+        image_feats = outputs.last_hidden_state[:, 0, :]
         image_feats = nn.functional.normalize(image_feats, dim=1)
-        
+
         # cos sim is (a \dot b) / ||a|| x ||b||
         # we normalize so magnitude is 1 which reduces to a \dot b
         sim_mat = torch.mm(image_feats, image_feats.T)
@@ -281,35 +298,32 @@ class PuzzleImageModel(nn.Module):
         sim_mat.fill_diagonal_(1.0)
         return sim_mat
 
-
     def crop_images(self, results, imgs):
+        """Crop the images per segmentation
+
+        Args:
+            results: segmentation masks from model
+            imgs: list of numpy arrays
+        Returns:
+            tuple: tensor of batched cropped,
+            xyxy coords of cropped box
         """
-            Crop the images per segmentation
-            Args:
-                results: segmentation masks from model
-                imgs: list of numpy arrays
-            Returns:
-                tuple: tensor of batched cropped,
-                xyxy coords of cropped box
-        """
-        #all_crops = []
         boxes_per_image = {i: [] for i in range(len(imgs))}
-        
+
         for idx, (result, img) in enumerate(zip(results, imgs)):
             boxes = result.boxes.xyxy
             h, w = img.shape[:2]
-            
+
             for box in boxes:
                 x1, y1, x2, y2 = map(int, box)
                 x1 = max(0, min(w-1, x1))
                 x2 = max(0, min(w, x2))
-                y1 = max(0, min(h-1,y1))
-                y2 = max(0, min(h,y2))
-                
+                y1 = max(0, min(h-1, y1))
+                y2 = max(0, min(h, y2))
+
                 if x2 <= x1 or y2 <= y1:
-                    continue # boxes out of bounds
-                
+                    continue  # boxes out of bounds
+
                 boxes_per_image[idx].append((x1, y1, x2, y2))
-                
-                        
-        return boxes_per_image # torch.stack(all_crops), 
+
+        return boxes_per_image

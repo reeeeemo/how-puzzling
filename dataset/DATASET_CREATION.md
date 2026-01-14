@@ -2,7 +2,7 @@
 
 While building the dataset for the puzzle pieces that need to segmented, I ran into an issue: I have bounding boxes, but no segmentations.
 
-Utilizing [SAM 2](https://huggingface.co/facebook/sam2.1-hiera-base-plus) was my original solution, but with the recent release of [SAM 3](https://huggingface.co/facebook/sam3) I thought it would be interesting to compare the 2 models using 4 sample images from my custom dataset to figure out which will give me the more accurate segmentations. I have listed my results below. 
+Utilizing [SAM 2](https://huggingface.co/facebook/sam2.1-hiera-base-plus) was my original solution, but with the recent release of [SAM 3](https://huggingface.co/facebook/sam3) I thought it would be interesting to compare the 2 models using 4 sample images from my custom dataset to figure out which will give me the more accurate segmentations. I have listed my results below.
 
 Note that I have excluded a couple of conditions, most notably:
 
@@ -50,6 +50,7 @@ I have a couple of hypothesis' with the segmentation methods that will be put to
 ## Results
 
 The tests I did were:
+
 - SAM 3 with a single bounding box in the current image + text as input
   - [With color](./results_images/bbox_text.jpg)
 - SAM 3 with all bounding boxes in the current image as input
@@ -88,7 +89,6 @@ This creates uncertainty amongst the structural information that the model alrea
 ### Why Grayscale?
 
 Back to the grayscale, I mentioned previously that detailed and colorful images might harm my segmentation of puzzle pieces since I only want to focus on the geometry instead of the color inside the image for my segmentation purposes. From my findings on the images posted above, when a puzzle piece has internal edges or colors with high variance (e.g., a puzzle piece has a small photo of a wine bottle inside, bright red apple inside of a otherwise brown puzzle), this amplifies the noise within an embedding.
-
 
 I found that grayscale dulls the noise caused by color dramatically, which improved each segmentation **for my specific use case**. However if you view the grayscaled detections shown above, it still gets stuck on the internal edges of certain puzzle pieces (e.g., slices of bread, wine bottles, apples, cups).
 

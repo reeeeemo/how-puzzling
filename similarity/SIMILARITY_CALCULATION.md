@@ -1,10 +1,10 @@
 # Similarity Matching
 
-## Bounding Box similarity:
+## Bounding Box similarity
 
 put text here
 
-## Segmentation similarity:
+## Segmentation similarity
 
 put text here
 
@@ -24,7 +24,6 @@ sides = {
     (1, 0), # right
 }
 ```
-
 
 My first idea was to use the local normal of the point(perpendicular to the tangent). [This is the result of my calculations](./dataset/results_images/normal_masks.png). As you can see, the flat edges produce the correct direction while any point in the tab/holes of a jigsaw puzzle piece assigns different directions.
 
