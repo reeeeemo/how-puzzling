@@ -1,12 +1,16 @@
-# Similarity Matching
+# Similarity Piece-To-Piece
 
-## Bounding Box similarity
+After getting successful segmentations, I shifted my focus over to pairwise cosine similarity between my jigsaw puzzle pieces using a [DINOv3 image encoder](https://huggingface.co/papers/2508.10104). However, I need cropped images for this problem, so I attempted 3 measures of similarity.
 
-put text here
+1. Bounding Box Similarity
+    - Little variance, as all puzzle pieces scored above the 0.950 percentile
+    - Background and relative colors across the entire puzzle could be a factor for this increase in similarity
+2. Segmentation Similarity
+    - Better variance (.300 difference)
+    - Is not shape-agnostic, which causes similar puzzle pieces which do not fit together to be the most similar.
+    - Does not solve the issue of knowing the placement of the piece relative to the selected piece. For example, a middle 4 piece versus another middle 4 piece, which side will fit it best?
 
-## Segmentation similarity
-
-put text here
+This brings me to my final and working method, edge-to-edge similarity.
 
 ## Edge Similarity
 
@@ -45,18 +49,40 @@ Both vectors are unit vectors since we normalized them, so our dot product is eq
 
 I have calculated an output [to this image output for the global process](./dataset/results_images/radial_masks.png).
 
+## Results
+
+This worked with rectangular crops, however...
+1. Each similarity was not consistent and regularly did not place correct pieces in the top 5 ranking of each edge as I had hoped. 
+2. Rectangular crops also take a part of the adjacent sides (right crop would have portions of the top/bottom crop) which poisons each edge's similarity metrics.
+
+The solution was relatively simple, take the current side's mask created by the segmentation model and compute the inner point given an integer that defines how much of the width/height I want from the edge.
+
+> I have created another [Desmos graph](https://www.desmos.com/geometry/zjzaztcfcv) of this inner point calculation, move around the sliders!
+
+To approximate the local inward normal, I first compute a central-difference approximation of the tangent vector between 2 neighboring boundary points [5]:
+
+$$T = -\frac{(p_{n+1}-p_{n-1})}{\Delta{t}}$$
+
+To ensure the direction points inward, I take the dot product between the polygon centroid and $T$ and negate if necessary to get $p_{inward}$. I then compute our inner point given an integer edge width $e_{width}$ and the original point $p_i$
+
+$$p_{inner}=p_i+p_{inward}\cdot(\frac{e_{width}}{2}) $$
+
+I have also added some morphological operations to fix any artifacts in the image and a flat-edge detector to abstract any pieces that do not fit with any piece. As a result, I have observed consistent top 5 rankings for each correct edge given a puzzle piece to compare. [Here is an example](./dataset/results_images/EdgeMatches.png). 
+
+While I do have issues with some inner points creating more artifacts (see the desmos graph and slide the points aroundfor an example), this does not harm the similarity rankings enough to cause issues. This also does not remove the shape similarities all together, however it does reduce their impact on the rankings enough to give correct results!
+
 ## References (TODO: cite these)
 
 1. Libretexts. (2024, October 1). 2.5: Coordinate systems and components of a vector (part 2). Physics LibreTexts. <https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)>
 2. Huamán, A. (n.d.). Goal. OpenCV. <https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html>
 3. Cosine Formula for Dot Product - ProofWiki. (2023). Proofwiki.org. <https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product>
+4. Dayala, R. (2020, July 21). 10.4 Hu Moments. Computer Vision. https://cvexplained.wordpress.com/2020/07/21/10-4-hu-moments/
+5. Djellouli, A. (2024). Central Difference Method. Adamdjellouli.com. https://adamdjellouli.com/articles/numerical_methods/3_differentiation/central_difference
 
-some more citations I gotta look into:
-- https://www.cuemath.com/calculus/tangent-line/
-- https://dmpeli.math.mcmaster.ca/Matlab/Math4Q3/NumMethods/Lecture3-1.html
 ‌
 
 [1]: https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)
 [2]: https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html
 [3]: https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product
 [4]: https://cvexplained.wordpress.com/2020/07/21/10-4-hu-moments/
+[5]: https://adamdjellouli.com/articles/numerical_methods/3_differentiation/central_difference

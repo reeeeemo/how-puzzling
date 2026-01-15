@@ -138,7 +138,7 @@ class PuzzleImageModel(nn.Module):
                     radials = [r for _, r in pts_tuple]
 
                     if self.is_flat_side(pts_side,
-                                         epsilon=25,
+                                         epsilon=30,
                                          vertical=(
                                              side_name not in ["top", "bottom"]
                                              )
@@ -212,6 +212,7 @@ class PuzzleImageModel(nn.Module):
                 piece_idx += 1
 
         return edge_metadata
+
 
     def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
         """Return True if side is flat, else false
