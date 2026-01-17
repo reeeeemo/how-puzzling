@@ -5,6 +5,7 @@ import cv2
 from model.model import PuzzleImageModel
 from dataset.dataset import PuzzleDataset
 import argparse
+from collections import defaultdict
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -32,10 +33,11 @@ def compute_similarites(model_path: Path, dataset_path: Path, split: str):
         dataset_path: path to dataset of images in YOLO format
          split: split to take images from
     Returns:
-        tuple of (cosine similarity matrix,
-        all images from split that was segmented,
-        xyxy coords of boxes cropped relative to segmented masks
-        list of dicts tracking which piece/side for each edge crop).
+        tuple consisting of:
+            YOLO-style results from seg model,
+            cosine similarity matrix,
+            all images that were segmented,
+            dict of all edge data.
     """
 
     model = PuzzleImageModel(model_name=str(model_path), device=DEVICE)
@@ -47,12 +49,22 @@ def compute_similarites(model_path: Path, dataset_path: Path, split: str):
         cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         for img, _ in dataset
     ]
-    similarities, boxes_per_image, edge_metadata = model(all_test_images)
-    return similarities, all_test_images, boxes_per_image, edge_metadata
+    results, similarities, edge_metadata = model(all_test_images)
+    return results, similarities, all_test_images, edge_metadata
 
 
-def visualize_edge_crop(crop, side_name, piece_id):
-    """Create a visualization of an edge crop with label."""
+def visualize_edge_crop(crop,
+                        side_name: str,
+                        piece_id: int):
+    """Create a visualization of an edge crop with label.
+
+    Args:
+        crop: edge crop to visualize
+        side_name: name to accompany visualization
+        piece_id: ID to accompany visualization
+    Returns:
+        resized crop with added metadata text.
+    """
     if side_name in ["top", "bottom"]:
         vis_crop = cv2.resize(crop, (224, 60))
     else:
@@ -70,6 +82,169 @@ def visualize_edge_crop(crop, side_name, piece_id):
 
     return vis_crop
 
+
+def get_compatible_similarities(edge_side: str, 
+                                edge_metadata: dict,
+                                cur_piece_idx: int,
+                                similarity_column):
+    """Compute opposing edge similarities, rank then return.
+
+    Args:
+        edge_side: current edge side
+        edge_metadata: information about every edge
+        cur_piece_idx: current puzzle piece ID
+        similarity_column: cosine sim mat for all edges
+    Returns:
+        list of compatible similarities, ranked.
+    """
+    opposite = {
+        "top": "bottom",
+        "bottom": "top",
+        "left": "right",
+        "right": "left"
+    }[edge_side]
+
+    compatible_edges = [
+        (i, meta) for i, meta in enumerate(edge_metadata)
+        if meta["side"] == opposite
+        and meta["piece_id"] != cur_piece_idx
+    ]
+
+    if not compatible_edges:
+        return None
+
+    compatible_sims = [
+        (i, meta, similarity_column[i].item())
+        for i, meta in compatible_edges
+    ]
+    compatible_sims.sort(key=lambda x: x[2], reverse=True)
+    return compatible_sims
+
+
+def plot_n_similar_edges(sim_mat,
+                         n: int,
+                         bboxes: list,
+                         img,
+                         edge_side: str,
+                         text_counts: dict):
+    """Plot on an img the top n edge similarities.
+
+    Args:
+        sim_mat: cosine sim mat for all edges
+        n: N sims to plot
+        bboxes: list of bboxes
+        img: image to plot on
+        edge_side: current edge side
+        text_counts: dict to align y axis text
+    """
+
+    # top 5 matches
+    for (rank, 
+         (_, match_meta, sim_score)
+    ) in enumerate(sim_mat[:n]):
+        match_pid = match_meta["piece_id"]
+        match_side = match_meta["side"]
+
+        mx1, my1, mx2, my2 = map(int, bboxes[match_pid])
+
+        if rank == 0:
+            color = (0, 255, 0)
+        elif rank == 1:
+            color = (0, 255, 255)
+        else:
+            color = (0, 165, 255)
+
+        cv2.rectangle(img, (mx1, my1), (mx2, my2), color, 2)
+        text_y = my1 + 20 + text_counts[match_pid]*25
+        text_counts[match_pid] += 1
+
+        cv2.putText(img,
+                    (
+                        f"target:{edge_side}->"
+                        f"this:{match_side}: {sim_score:.3f}"
+                    ),
+                    (mx1+5, text_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
+                    )
+
+
+def visualize_similarities(results: list, 
+                           sims, 
+                           images: list, 
+                           edge_metadata: dict):
+    """Visualize model results piece-wise.
+
+    Args:
+        results: YOLO-style results list
+        sims: cosine sim mat of edge similarities
+        images: list of images inferenced
+        edge_metadata: info about every edge
+    """
+    for idx, result in enumerate(results):
+        boxes = result.boxes.xyxy
+        for piece_idx in range(len(boxes)):
+            piece_edges = [i for i, meta in enumerate(edge_metadata)
+                           if meta["piece_id"] == piece_idx]
+            if not piece_edges:
+                continue
+
+            img = images[idx].copy()
+            x1, y1, x2, y2 = map(int, boxes[piece_idx])
+
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 3)
+            cv2.putText(img,
+                        f"Piece {piece_idx}",
+                        (x1+5, y1-10),
+                        cv2.FONT_HERSHEY_SIMPLEX,
+                        0.7,
+                        (255, 255, 255), 2)
+
+            text_counts = defaultdict(int)
+            edge_crops_display = []
+            for edge_idx in piece_edges:
+                edge_side = edge_metadata[edge_idx]["side"]
+                edge_crop = edge_metadata[edge_idx]["crop"]
+                sim_col = sims[edge_idx, :]
+
+                compatible_sims = get_compatible_similarities(
+                    edge_side=edge_side,
+                    edge_metadata=edge_metadata,
+                    cur_piece_idx=piece_idx,
+                    similarity_column=sim_col
+                )
+
+                current_edge_vis = visualize_edge_crop(edge_crop,
+                                                       edge_side,
+                                                       piece_idx)
+                edge_crops_display.append(current_edge_vis)
+
+                plot_n_similar_edges(
+                    sim_mat=compatible_sims,
+                    n=5,
+                    bboxes=boxes,
+                    img=img,
+                    edge_side=edge_side,
+                    text_counts=text_counts
+                )
+
+            if edge_crops_display:
+                max_height = img.shape[0]
+                crop_panel = np.zeros((max_height, 300, 3), dtype=np.uint8)
+                y_offset = 10
+
+                for crop_vis in edge_crops_display:
+                    h, w = crop_vis.shape[:2]
+                    if y_offset+h < max_height and w <= 290:
+                        crop_panel[y_offset:y_offset+h, 10:10+w] = crop_vis
+                        y_offset += h + 10
+
+                combined = np.hstack([img, crop_panel])
+                cv2.imshow(f"Edge matches for piece {piece_idx}", combined)
+            else:
+                cv2.imshow(f"Edge matches for piece {piece_idx}", img)
+            cv2.waitKey(0)
+            cv2.destroyAllWindows()
+    return
 
 def main():
     parser = argparse.ArgumentParser(
@@ -94,117 +269,12 @@ def main():
     dataset_path = project_path / args.dataset
 
     (
+        results,
         sims,
         images,
-        boxes_per_image,
         edge_metadata
     ) = compute_similarites(model_path, dataset_path, args.split)
-
-    n_pieces = max(meta["piece_id"] for meta in edge_metadata) + 1
-
-    for idx, boxes in boxes_per_image.items():
-        for piece_idx in range(n_pieces):
-            piece_edges = [i for i, meta in enumerate(edge_metadata)
-                           if meta["piece_id"] == piece_idx]
-            if not piece_edges:
-                continue
-
-            img = images[idx].copy()
-            x1, y1, x2, y2 = boxes[piece_idx]
-
-            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 3)
-            cv2.putText(img,
-                        f"Piece {piece_idx}",
-                        (x1+5, y1-10),
-                        cv2.FONT_HERSHEY_SIMPLEX,
-                        0.7,
-                        (255, 255, 255), 2)
-
-            text_counts = {}
-            edge_crops_display = []
-            for edge_idx in piece_edges:
-                edge_side = edge_metadata[edge_idx]["side"]
-                edge_crop = edge_metadata[edge_idx]["crop"]
-                sim_col = sims[edge_idx, :]
-
-                if edge_side in ["top", "bottom"]:
-                    opposite = "bottom" if edge_side == "top" else "top"
-                else:
-                    opposite = "right" if edge_side == "left" else "left"
-
-                compatible_edges = [
-                    (i, meta) for i, meta in enumerate(edge_metadata)
-                    if meta["side"] == opposite
-                    and meta["piece_id"] != piece_idx
-                ]
-
-                if not compatible_edges:
-                    continue
-
-                compatible_sims = [
-                    (i, meta, sim_col[i].item())
-                    for i, meta in compatible_edges
-                ]
-                compatible_sims.sort(key=lambda x: x[2], reverse=True)
-
-                current_edge_vis = visualize_edge_crop(edge_crop,
-                                                       edge_side,
-                                                       piece_idx)
-                edge_crops_display.append(current_edge_vis)
-
-                # top 5 matches
-                for (rank, (_, match_meta, sim_score)) in enumerate(
-                                                            compatible_sims[:5]
-                                                                   ):
-                    match_piece_id = match_meta["piece_id"]
-                    match_side = match_meta["side"]
-
-                    if match_piece_id >= len(boxes):
-                        continue
-                    match_box = boxes[match_piece_id]
-                    mx1, my1, mx2, my2 = match_box
-
-                    if match_piece_id not in text_counts:
-                        text_counts[match_piece_id] = 0
-
-                    if rank == 0:
-                        color = (0, 255, 0)
-                    elif rank == 1:
-                        color = (0, 255, 255)
-                    else:
-                        color = (0, 165, 255)
-
-                    cv2.rectangle(img, (mx1, my1), (mx2, my2), color, 2)
-                    text_y = my1 + 20 + text_counts[match_piece_id]*25
-                    text_counts[match_piece_id] += 1
-
-                    cv2.putText(img,
-                                (
-                                    f"target:{edge_side}->"
-                                    f"this:{match_side}: {sim_score:.3f}"
-                                ),
-                                (mx1+5, text_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 2
-                                )
-
-            if edge_crops_display:
-                max_height = img.shape[0]
-                crop_panel = np.zeros((max_height, 300, 3), dtype=np.uint8)
-                y_offset = 10
-
-                for crop_vis in edge_crops_display:
-                    h, w = crop_vis.shape[:2]
-                    if y_offset+h < max_height and w <= 290:
-                        crop_panel[y_offset:y_offset+h, 10:10+w] = crop_vis
-                        y_offset += h + 10
-
-                combined = np.hstack([img, crop_panel])
-                cv2.imshow(f"Edge matches for piece {piece_idx}", combined)
-            else:
-                cv2.imshow(f"Edge matches for piece {piece_idx}", img)
-            cv2.waitKey(0)
-            cv2.destroyAllWindows()
-    return
+    visualize_similarities(results, sims, images, edge_metadata)
 
 
 if __name__ == "__main__":

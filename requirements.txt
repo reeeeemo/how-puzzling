@@ -4,3 +4,4 @@ ultralytics
 opencv-python
 git+https://github.com/huggingface/transformers
 accelerate
+gymnasium

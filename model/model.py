@@ -45,17 +45,17 @@ class PuzzleImageModel(nn.Module):
         Args:
             imgs: list of numpy arrays
         Returns:
+            List of raw segmentations
             Tuple of cosine similarities of each detected object,
-            Xyxy coords of boxes cropped relative to segmented mask,
             List of dicts tracking piece, side, and crop for every image.
         """
         results = self.model(imgs, verbose=False)
         edge_metadata = self.extract_all_edges(results, edge_width=80)
-        boxes_per_image = self.crop_images(results, imgs)
         similarities = self.compute_similarities(
             [data.get("crop") for data in edge_metadata]
         )
-        return similarities, boxes_per_image, edge_metadata
+        return results, similarities, edge_metadata
+
 
     def extract_all_edges(self, results, edge_width: int = 60) -> dict:
         """Extract each edge crop for all pieces.
