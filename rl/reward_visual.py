@@ -24,6 +24,46 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #   --model model/puzzle-segment-model/best.pt
 #   --split test
 
+def get_centroid(mask: np.ndarray) -> tuple[int, int]:
+    """Calculate centroid of a binary mask."""
+    mu = cv2.moments(mask)
+    if mu.get('m00', 0) == 0:
+        return None
+    return (
+        int(mu["m01"] / mu["m00"]),  # cy
+        int(mu["m10"] / mu["m00"])  # cx
+    )
+
+
+def pad_center_to_size(img: np.ndarray, target_size: tuple, offset: tuple):
+    """gaga wuwu wawa.
+
+    Args:
+        img: image to pad.
+        target_size (height, width): how much padding in height, width format.
+        offset (y_offset, x_offset): position of bottom left corner
+    Returns:
+        padded / centered image.
+    """
+    target_h, target_w = target_size
+    h, w = img.shape[:2]
+    y_offset, x_offset = offset
+
+    pad_top = y_offset
+    pad_bottom = target_h - h - pad_top
+    pad_left = x_offset
+    pad_right = target_w - w - pad_left
+
+    padded = cv2.copyMakeBorder(
+        img,
+        pad_top, pad_bottom, pad_left, pad_right,
+        cv2.BORDER_CONSTANT,
+        value=(0, 0, 0)
+    )
+
+    return padded
+
+
 def reward_function(mask_a: np.ndarray,
                     mask_b: np.ndarray,
                     side_a: str,
@@ -37,117 +77,76 @@ def reward_function(mask_a: np.ndarray,
     if mask_a is None or mask_b is None or similarity_score <= 0:
         return -5.0
 
-    height_a, width_a = mask_a.shape
-    height_b, width_b = mask_b.shape
+    h_a, w_a = mask_a.shape[:2]
+    h_b, w_b = mask_b.shape[:2]
 
-    offset_x = {
-        "right": width_a,
-        "left": -width_b
-    }.get(side_a, 0)
-    offset_y = {
-        "bottom": height_a,
-        "top": -height_b
-    }.get(side_a, 0)
+    centroid_a = get_centroid(mask_a)
+    centroid_b = get_centroid(mask_b)
 
-    padding = 30
+    if not centroid_a or not centroid_b:
+        return -5.0
 
-    # calc min/max pos
-    min_y = min(0, offset_y)
-    max_y = max(height_a, height_b + offset_y)
-    canvas_h = max_y - min_y + padding * 2
+    cy_a, cx_a = centroid_a
+    cy_b, cx_b = centroid_b
+    padding = 50
+    overlap_distance_y = 75
+    overlap_distance_x = 60
 
-    min_x = min(0, offset_x)
-    max_x = max(width_a, width_b + offset_x)
-    canvas_w = max_x - min_x + padding * 2
+    if side_a in ["right", "left"]:
+        canvas_w = w_a + w_b + padding * 2
+        canvas_h = max(h_a, h_b) + padding * 2
 
-    canvas_a = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
-    canvas_b = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+        offset_a_y = padding + (canvas_h - padding * 2) // 2 - cy_a
+        if side_a == "right":
+            offset_a_x = padding
+            offset_b_x = padding + w_a - overlap_distance_x
+        else:
+            offset_a_x = padding + w_b - overlap_distance_x
+            offset_b_x = padding
 
-    ya = padding - min_y
-    xa = padding - min_x
-    canvas_a[ya:ya+height_a, xa:xa+width_a] = mask_a
+        offset_b_y = offset_a_y + cy_a - cy_b
+    else:
+        canvas_w = max(w_a, w_b) + padding * 2
+        canvas_h = h_a + h_b + padding * 2
 
-    yb = ya + offset_y
-    xb = xa + offset_x
-    canvas_b[yb:yb+height_b, xb:xb+width_b] = mask_b
+        offset_a_x = padding + (canvas_w - padding * 2) // 2 - cx_a
 
-    cv2.imshow("wahA", canvas_a)
-    cv2.imshow("wahB", canvas_b)
+        if side_a == "bottom":
+            offset_a_y = padding
+            offset_b_y = padding + h_a - overlap_distance_y
+        else:
+            offset_a_y = padding + h_b - overlap_distance_y
+            offset_b_y = padding
 
-    combined = cv2.cvtColor(canvas_a, cv2.COLOR_GRAY2BGR)
-    combined[canvas_a > 0] = (0, 0, 255)
-    combined[canvas_b > 0] = (255, 0, 0)
+        offset_b_x = offset_a_x + cx_a - cx_b
 
-    cv2.imshow("combined", combined)
+    padded_a = pad_center_to_size(mask_a,
+                                  (canvas_h, canvas_w),
+                                  (offset_a_y, offset_a_x),
+                                  )
+    padded_b = pad_center_to_size(mask_b,
+                                  (canvas_h, canvas_w),
+                                  (offset_b_y, offset_b_x))
+
+    combined = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+    combined[padded_a > 0] = (0, 0, 255)
+    combined[padded_b > 0] = (255, 0, 0)
+
+    overlap = (padded_a > 0) & (padded_b > 0)
+    combined[overlap] = (0, 255, 255)
+
+    centroid_a_canvas = (offset_a_x + cx_a, offset_a_y + cy_a)
+    centroid_b_canvas = (offset_b_x + cx_b, offset_b_y + cy_b)
+    cv2.circle(combined, centroid_a_canvas, 5, (0, 255, 0), -1)
+    cv2.circle(combined, centroid_b_canvas, 5, (0, 255, 0), -1)
+
+    cv2.imshow(f"pieces aligned on {side_a} axis", combined)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
-    """
-    offset_x = {
-        "right": int(width_a * 0.92),
-        "left": -int(width_b * 0.92)
-    }.get(side_a, 0)
-    offset_y = {
-        "bottom": int(height_a * 0.92),
-        "top": -int(height_b * 0.92)
-    }.get(side_a, 0)
-
-    padding = 1  # maybe tunable?
-    canvas_h = max(height_a, height_b + abs(offset_y)) + padding * 2
-    canvas_w = max(width_a, width_b + abs(offset_x)) + padding * 2
-
-    canvas_a = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
-    canvas_b = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
-
-    # clip a
-    center_y = canvas_h // 2
-    center_x = canvas_w // 2
-
-    # ya = padding + max(0, -offset_y)
-    # xa = padding + max(0, -offset_x)
-
-    ya = center_y - height_a // 2
-    xa = center_x - width_a // 2
-
-    ya_start = max(0, ya)
-    ya_end = min(canvas_h, ya + height_a)
-    xa_start = max(0, xa)
-    xa_end = min(canvas_w, xa + width_a)
-
-    if ya_end > ya_start and xa_end > xa_start:
-        mask_a_slice = mask_a[ya_start - ya:ya_start - ya + (ya_end-ya_start),
-                              xa_start - xa:xa_start - xa + (xa_end-xa_start)]
-        canvas_a[ya_start:ya_end, xa_start:xa_end] = mask_a_slice
-    else:
-        return -10.0
-
-    # clip b
-    yb = ya + offset_y
-    xb = xa + offset_x
-    yb_start = max(0, yb)
-    yb_end = min(canvas_h, yb+height_b)
-    xb_start = max(0, xb)
-    xb_end = min(canvas_w, xb+width_b)
-
-    if yb_end > yb_start and xb_end > xb_start:
-        mask_b_slice = mask_b[yb_start - yb:yb_start - yb + (yb_end-yb_start),
-                              xb_start - xb:xb_start - xb + (xb_end-xb_start)]
-        canvas_b[yb_start:yb_end, xb_start:xb_end] = mask_b_slice
-    else:
-        return -10.0
-
-    cv2.imshow("wahA", canvas_a)
-    cv2.imshow("wahB", canvas_b)
-
-    combined = cv2.cvtColor(canvas_a, cv2.COLOR_GRAY2BGR)
-    combined[canvas_a > 0] = (0, 0, 255)
-    combined[canvas_b > 0] = (255, 0, 0)
-
-    cv2.imshow("combined canvas", combined)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()"""
-
-    return 12*similarity_score
+    overlap_area = np.sum(overlap)
+    print(f"overlap: {overlap_area} pixels")
+    return (0.75 * similarity_score) - (0.25 * overlap_area)
 
 
 def visualize_reward(model_path: str, images: list):
@@ -230,7 +229,7 @@ def visualize_reward(model_path: str, images: list):
                                     f"this:{match_side}: {reward_score:.3f}"
                                 ),
                                 (mx1+5, text_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 0, 255), 2
+                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2
                                 )
 
             cv2.imshow(f"Edge matches for piece {piece_idx}", img)
