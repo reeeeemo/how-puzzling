@@ -83,7 +83,7 @@ def visualize_edge_crop(crop,
     return vis_crop
 
 
-def get_compatible_similarities(edge_side: str, 
+def get_compatible_similarities(edge_side: str,
                                 edge_metadata: dict,
                                 cur_piece_idx: int,
                                 similarity_column):
@@ -139,9 +139,9 @@ def plot_n_similar_edges(sim_mat,
     """
 
     # top 5 matches
-    for (rank, 
+    for (rank,
          (_, match_meta, sim_score)
-    ) in enumerate(sim_mat[:n]):
+         ) in enumerate(sim_mat[:n]):
         match_pid = match_meta["piece_id"]
         match_side = match_meta["side"]
 
@@ -168,9 +168,9 @@ def plot_n_similar_edges(sim_mat,
                     )
 
 
-def visualize_similarities(results: list, 
-                           sims, 
-                           images: list, 
+def visualize_similarities(results: list,
+                           sims,
+                           images: list,
                            edge_metadata: dict):
     """Visualize model results piece-wise.
 
@@ -245,6 +245,7 @@ def visualize_similarities(results: list,
             cv2.waitKey(0)
             cv2.destroyAllWindows()
     return
+
 
 def main():
     parser = argparse.ArgumentParser(

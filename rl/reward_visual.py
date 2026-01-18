@@ -24,22 +24,65 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #   --model model/puzzle-segment-model/best.pt
 #   --split test
 
-def reward_function(mask_a: np.ndarray, 
+def reward_function(mask_a: np.ndarray,
                     mask_b: np.ndarray,
                     side_a: str,
                     similarity_score: float,
                     dilation_radius: int = 10,
                     expected_contact_ratio: float = 0.07):
     """Given 2 boxes, return the reward for both opposing pieces.
-    
+
     Reward: whitespace + overlap + top similar
     """
     if mask_a is None or mask_b is None or similarity_score <= 0:
         return -5.0
-    
+
     height_a, width_a = mask_a.shape
     height_b, width_b = mask_b.shape
 
+    offset_x = {
+        "right": width_a,
+        "left": -width_b
+    }.get(side_a, 0)
+    offset_y = {
+        "bottom": height_a,
+        "top": -height_b
+    }.get(side_a, 0)
+
+    padding = 30
+
+    # calc min/max pos
+    min_y = min(0, offset_y)
+    max_y = max(height_a, height_b + offset_y)
+    canvas_h = max_y - min_y + padding * 2
+
+    min_x = min(0, offset_x)
+    max_x = max(width_a, width_b + offset_x)
+    canvas_w = max_x - min_x + padding * 2
+
+    canvas_a = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+    canvas_b = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+
+    ya = padding - min_y
+    xa = padding - min_x
+    canvas_a[ya:ya+height_a, xa:xa+width_a] = mask_a
+
+    yb = ya + offset_y
+    xb = xa + offset_x
+    canvas_b[yb:yb+height_b, xb:xb+width_b] = mask_b
+
+    cv2.imshow("wahA", canvas_a)
+    cv2.imshow("wahB", canvas_b)
+
+    combined = cv2.cvtColor(canvas_a, cv2.COLOR_GRAY2BGR)
+    combined[canvas_a > 0] = (0, 0, 255)
+    combined[canvas_b > 0] = (255, 0, 0)
+
+    cv2.imshow("combined", combined)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+
+    """
     offset_x = {
         "right": int(width_a * 0.92),
         "left": -int(width_b * 0.92)
@@ -49,11 +92,63 @@ def reward_function(mask_a: np.ndarray,
         "top": -int(height_b * 0.92)
     }.get(side_a, 0)
 
-    padding = 40 # maybe tunable?
+    padding = 1  # maybe tunable?
     canvas_h = max(height_a, height_b + abs(offset_y)) + padding * 2
     canvas_w = max(width_a, width_b + abs(offset_x)) + padding * 2
 
+    canvas_a = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+    canvas_b = np.zeros((canvas_h, canvas_w), dtype=np.uint8)
+
+    # clip a
+    center_y = canvas_h // 2
+    center_x = canvas_w // 2
+
+    # ya = padding + max(0, -offset_y)
+    # xa = padding + max(0, -offset_x)
+
+    ya = center_y - height_a // 2
+    xa = center_x - width_a // 2
+
+    ya_start = max(0, ya)
+    ya_end = min(canvas_h, ya + height_a)
+    xa_start = max(0, xa)
+    xa_end = min(canvas_w, xa + width_a)
+
+    if ya_end > ya_start and xa_end > xa_start:
+        mask_a_slice = mask_a[ya_start - ya:ya_start - ya + (ya_end-ya_start),
+                              xa_start - xa:xa_start - xa + (xa_end-xa_start)]
+        canvas_a[ya_start:ya_end, xa_start:xa_end] = mask_a_slice
+    else:
+        return -10.0
+
+    # clip b
+    yb = ya + offset_y
+    xb = xa + offset_x
+    yb_start = max(0, yb)
+    yb_end = min(canvas_h, yb+height_b)
+    xb_start = max(0, xb)
+    xb_end = min(canvas_w, xb+width_b)
+
+    if yb_end > yb_start and xb_end > xb_start:
+        mask_b_slice = mask_b[yb_start - yb:yb_start - yb + (yb_end-yb_start),
+                              xb_start - xb:xb_start - xb + (xb_end-xb_start)]
+        canvas_b[yb_start:yb_end, xb_start:xb_end] = mask_b_slice
+    else:
+        return -10.0
+
+    cv2.imshow("wahA", canvas_a)
+    cv2.imshow("wahB", canvas_b)
+
+    combined = cv2.cvtColor(canvas_a, cv2.COLOR_GRAY2BGR)
+    combined[canvas_a > 0] = (0, 0, 255)
+    combined[canvas_b > 0] = (255, 0, 0)
+
+    cv2.imshow("combined canvas", combined)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()"""
+
     return 12*similarity_score
+
 
 def visualize_reward(model_path: str, images: list):
     """Visualize model results with a reward function piece-wise.
@@ -87,16 +182,16 @@ def visualize_reward(model_path: str, images: list):
                 continue
 
             img = images[idx].copy()
-            x1, y1, x2, y2 = map(int, boxes[piece_idx])#boxes[piece_idx]
+            x1, y1, x2, y2 = map(int, boxes[piece_idx])
 
-            cv2.rectangle(img, (x1,y1), (x2,y2), (255, 255, 255), 3)
+            cv2.rectangle(img, (x1, y1), (x2, y2), (255, 255, 255), 3)
             cv2.putText(img,
                         f"Piece {piece_idx}",
                         (x1+5, y1-10),
                         cv2.FONT_HERSHEY_SIMPLEX,
                         0.7,
                         (255, 255, 255), 2)
-            
+
             text_counts = defaultdict(int)
             for edge_idx in piece_edges:
                 edge_side = edges[edge_idx]["side"]
@@ -119,13 +214,16 @@ def visualize_reward(model_path: str, images: list):
                     # get the matching piece's bbox
                     match_box = map(int, boxes[match_pid])
                     mx1, my1, mx2, my2 = match_box
-                    cv2.rectangle(img, (mx1, my1), (mx2, my2), (255,0,0), 2)
+                    cv2.rectangle(img, (mx1, my1), (mx2, my2), (255, 0, 0), 2)
                     text_y = my1 + 20 + text_counts[match_pid]*20
                     text_counts[match_pid] += 1
 
                     mask1 = piece_masks.get(piece_idx)
                     mask2 = piece_masks.get(match_pid)
-                    reward_score = reward_function(mask1, mask2, sim_score)
+                    reward_score = reward_function(mask1,
+                                                   mask2,
+                                                   edge_side,
+                                                   sim_score)
                     cv2.putText(img,
                                 (
                                     f"target:{edge_side}->"
@@ -153,6 +251,7 @@ def create_binary_mask(poly, box, img_shape: tuple):
     b_crop = b_mask[y1:y2, x1:x2]
 
     return b_crop
+
 
 def main():
     parser = argparse.ArgumentParser(

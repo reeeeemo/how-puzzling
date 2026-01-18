@@ -52,7 +52,8 @@ I have calculated an output [to this image output for the global process](./data
 ## Results
 
 This worked with rectangular crops, however...
-1. Each similarity was not consistent and regularly did not place correct pieces in the top 5 ranking of each edge as I had hoped. 
+
+1. Each similarity was not consistent and regularly did not place correct pieces in the top 5 ranking of each edge as I had hoped.
 2. Rectangular crops also take a part of the adjacent sides (right crop would have portions of the top/bottom crop) which poisons each edge's similarity metrics.
 
 The solution was relatively simple, take the current side's mask created by the segmentation model and compute the inner point given an integer that defines how much of the width/height I want from the edge.
@@ -67,7 +68,7 @@ To ensure the direction points inward, I take the dot product between the polygo
 
 $$p_{inner}=p_i+p_{inward}\cdot(\frac{e_{width}}{2}) $$
 
-I have also added some morphological operations to fix any artifacts in the image and a flat-edge detector to abstract any pieces that do not fit with any piece. As a result, I have observed consistent top 5 rankings for each correct edge given a puzzle piece to compare. [Here is an example](./dataset/results_images/EdgeMatches.png). 
+I have also added some morphological operations to fix any artifacts in the image and a flat-edge detector to abstract any pieces that do not fit with any piece. As a result, I have observed consistent top 5 rankings for each correct edge given a puzzle piece to compare. [Here is an example](./dataset/results_images/EdgeMatches.png).
 
 While I do have issues with some inner points creating more artifacts (see the desmos graph and slide the points aroundfor an example), this does not harm the similarity rankings enough to cause issues. This also does not remove the shape similarities all together, however it does reduce their impact on the rankings enough to give correct results!
 
@@ -76,8 +77,8 @@ While I do have issues with some inner points creating more artifacts (see the d
 1. Libretexts. (2024, October 1). 2.5: Coordinate systems and components of a vector (part 2). Physics LibreTexts. <https://phys.libretexts.org/Bookshelves/University_Physics/University_Physics_(OpenStax)/Book%3A_University_Physics_I_-_Mechanics_Sound_Oscillations_and_Waves_(OpenStax)/02%3A_Vectors/2.05%3A__Coordinate_Systems_and_Components_of_a_Vector_(Part_2)>
 2. Huamán, A. (n.d.). Goal. OpenCV. <https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html>
 3. Cosine Formula for Dot Product - ProofWiki. (2023). Proofwiki.org. <https://proofwiki.org/wiki/Cosine_Formula_for_Dot_Product>
-4. Dayala, R. (2020, July 21). 10.4 Hu Moments. Computer Vision. https://cvexplained.wordpress.com/2020/07/21/10-4-hu-moments/
-5. Djellouli, A. (2024). Central Difference Method. Adamdjellouli.com. https://adamdjellouli.com/articles/numerical_methods/3_differentiation/central_difference
+4. Dayala, R. (2020, July 21). 10.4 Hu Moments. Computer Vision. <https://cvexplained.wordpress.com/2020/07/21/10-4-hu-moments/>
+5. Djellouli, A. (2024). Central Difference Method. Adamdjellouli.com. <https://adamdjellouli.com/articles/numerical_methods/3_differentiation/central_difference>
 
 ‌
 

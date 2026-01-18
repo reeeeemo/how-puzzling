@@ -56,7 +56,6 @@ class PuzzleImageModel(nn.Module):
         )
         return results, similarities, edge_metadata
 
-
     def extract_all_edges(self, results, edge_width: int = 60) -> dict:
         """Extract each edge crop for all pieces.
 
@@ -212,7 +211,6 @@ class PuzzleImageModel(nn.Module):
                 piece_idx += 1
 
         return edge_metadata
-
 
     def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
         """Return True if side is flat, else false

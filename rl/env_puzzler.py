@@ -6,6 +6,8 @@ import numpy as np
 # some links to look into:
 # https://gymnasium.farama.org/tutorials/gymnasium_basics/environment_creation/#subclassing-gymnasium-env
 # https://github.com/johnnycode8/gym_custom_env/blob/main/v0_warehouse_robot_env.py
+
+
 class Puzzler(gym.Env):
     """Custom gymnasium-compatible environment for solving puzzles.
 
@@ -15,14 +17,13 @@ class Puzzler(gym.Env):
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
-
-    def __init__(self, 
-                 puzzle_image, 
+    def __init__(self,
+                 puzzle_image,
                  seg_model_path: str,
                  max_steps=100,
                  device: str = "cpu",
                  render_mode=None
-                ):
+                 ):
         self.max_steps = max_steps
         self.model = PuzzleImageModel(model_name=seg_model_path, device=device)
         self.orig_image = puzzle_image
@@ -47,12 +48,12 @@ class Puzzler(gym.Env):
     def _get_obs(self):
         """TODO: Translate environment's state into an observation."""
         return None
-    
+
     def _get_info(self):
         """TODO: Return information that is returned by step/reset."""
         return None
-    
+
     def reset(self, seed=None, options=None):
         super().reset(seed=seed)
         # TODO
-        return None, None # obs, info
+        return None, None  # obs, info
