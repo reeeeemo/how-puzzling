@@ -35,8 +35,8 @@ def get_centroid(mask: np.ndarray) -> tuple[int, int]:
     )
 
 
-def pad_center_to_size(img: np.ndarray, target_size: tuple, offset: tuple):
-    """gaga wuwu wawa.
+def pad_offset_to_size(img: np.ndarray, target_size: tuple, offset: tuple):
+    """Pads an image to the target size, centers based on an offset.
 
     Args:
         img: image to pad.
@@ -92,6 +92,7 @@ def reward_function(mask_a: np.ndarray,
     overlap_distance_y = 75
     overlap_distance_x = 60
 
+    # compute max width/height + any padding then offset by polygon centroid
     if side_a in ["right", "left"]:
         canvas_w = w_a + w_b + padding * 2
         canvas_h = max(h_a, h_b) + padding * 2
@@ -120,33 +121,58 @@ def reward_function(mask_a: np.ndarray,
 
         offset_b_x = offset_a_x + cx_a - cx_b
 
-    padded_a = pad_center_to_size(mask_a,
+    padded_a = pad_offset_to_size(mask_a,
                                   (canvas_h, canvas_w),
                                   (offset_a_y, offset_a_x),
                                   )
-    padded_b = pad_center_to_size(mask_b,
+    padded_b = pad_offset_to_size(mask_b,
                                   (canvas_h, canvas_w),
                                   (offset_b_y, offset_b_x))
+
+    union_mask = (padded_a > 0) | (padded_b > 0)
+    coords = np.column_stack(np.where(union_mask))
+    if len(coords) == 0:
+        return -5.0
+
+    min_y, min_x = coords.min(axis=0)
+    max_y, max_x = coords.max(axis=0)
+
+    region_a = padded_a[min_y:max_y+1, min_x:max_x+1]
+    region_b = padded_b[min_y:max_y+1, min_x:max_x+1]
+
+    cv2.imshow("wawa", region_a)
+    cv2.imshow("wuwu", region_b)
+    cv2.waitKey(0)
+
+    overlap = (region_a > 0) & (region_b > 0)  # padded
+    whitespace = (region_a == 0) & (region_b == 0)
 
     combined = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     combined[padded_a > 0] = (0, 0, 255)
     combined[padded_b > 0] = (255, 0, 0)
+    combined[(padded_a > 0) & (padded_b > 0)] = (0, 255, 255)
 
-    overlap = (padded_a > 0) & (padded_b > 0)
-    combined[overlap] = (0, 255, 255)
+    cv2.rectangle(combined, (min_x, min_y), (max_x, max_y), (255, 255, 255), 2)
 
+    # combined[whitespace] = (255, 255, 255)
     centroid_a_canvas = (offset_a_x + cx_a, offset_a_y + cy_a)
     centroid_b_canvas = (offset_b_x + cx_b, offset_b_y + cy_b)
+
     cv2.circle(combined, centroid_a_canvas, 5, (0, 255, 0), -1)
     cv2.circle(combined, centroid_b_canvas, 5, (0, 255, 0), -1)
+
+    cv2.circle(combined, (min_x, min_y), 5, (255, 255, 255), -1)
+    cv2.circle(combined, (max_x, max_y), 5, (255, 255, 255), -1)
 
     cv2.imshow(f"pieces aligned on {side_a} axis", combined)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
 
     overlap_area = np.sum(overlap)
+    whitespace_area = np.sum(whitespace)
     print(f"overlap: {overlap_area} pixels")
-    return (0.75 * similarity_score) - (0.25 * overlap_area)
+    print(f"whitespace: {whitespace_area} pixels")
+    return (0.5 * (similarity_score*1000)) - (0.5 * overlap_area)
 
 
 def visualize_reward(model_path: str, images: list):
@@ -203,6 +229,44 @@ def visualize_reward(model_path: str, images: list):
                     similarity_column=sim_col
                 )
 
+                max_reward = float("-inf")
+                max_piece_idx = -1
+                for compat_idx, (_,
+                                 match_meta,
+                                 sim_score) in enumerate(compatible_sims[:5]):
+                    match_pid = match_meta["piece_id"]
+                    match_side = match_meta["side"]
+
+                    if match_pid >= len(boxes):
+                        continue
+
+                    mask1 = piece_masks.get(piece_idx)
+                    mask2 = piece_masks.get(match_pid)
+                    reward_score = reward_function(mask1,
+                                                   mask2,
+                                                   edge_side,
+                                                   sim_score)
+                    if reward_score > max_reward:
+                        max_reward = reward_score
+                        max_piece_idx = compat_idx
+
+                # place highest rated pid
+                match_pid = compatible_sims[max_piece_idx][1]["piece_id"]
+                match_side = compatible_sims[max_piece_idx][1]["side"]
+                match_box = map(int, boxes[match_pid])
+                mx1, my1, mx2, my2 = match_box
+                cv2.rectangle(img, (mx1, my1), (mx2, my2), (255, 0, 0), 2)
+                text_y = my1 + 20 + text_counts[match_pid]*20
+                text_counts[match_pid] += 1
+                cv2.putText(img,
+                            (
+                                f"target:{edge_side}->"
+                                f"this:{match_side}: {max_reward:.3f}"
+                            ),
+                            (mx1+5, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2
+                            )
+                """
                 for (_, match_meta, sim_score) in compatible_sims[:5]:
                     match_pid = match_meta["piece_id"]
                     match_side = match_meta["side"]
@@ -230,7 +294,7 @@ def visualize_reward(model_path: str, images: list):
                                 ),
                                 (mx1+5, text_y),
                                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2
-                                )
+                                ) """
 
             cv2.imshow(f"Edge matches for piece {piece_idx}", img)
             cv2.waitKey(0)
