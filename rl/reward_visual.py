@@ -66,10 +66,9 @@ def pad_offset_to_size(img: np.ndarray, target_size: tuple, offset: tuple):
 
 def reward_function(mask_a: np.ndarray,
                     mask_b: np.ndarray,
+                    cur_pts: dict,
                     side_a: str,
-                    similarity_score: float,
-                    dilation_radius: int = 10,
-                    expected_contact_ratio: float = 0.07):
+                    similarity_score: float):
     """Given 2 boxes, return the reward for both opposing pieces.
 
     Reward: whitespace + overlap + top similar
@@ -121,28 +120,30 @@ def reward_function(mask_a: np.ndarray,
 
         offset_b_x = offset_a_x + cx_a - cx_b
 
+    cur_pts_side = cur_pts.get(side_a, [])
+    if len(cur_pts_side) == 0:
+        return -5.0
+
+    side_pts = np.array([pt for pt, _ in cur_pts_side])
+
     padded_a = pad_offset_to_size(mask_a,
                                   (canvas_h, canvas_w),
-                                  (offset_a_y, offset_a_x),
-                                  )
+                                  (offset_a_y, offset_a_x))
     padded_b = pad_offset_to_size(mask_b,
                                   (canvas_h, canvas_w),
                                   (offset_b_y, offset_b_x))
 
-    union_mask = (padded_a > 0) | (padded_b > 0)
-    coords = np.column_stack(np.where(union_mask))
-    if len(coords) == 0:
-        return -5.0
+    side_xs = side_pts[:, 0] + offset_a_x
+    side_ys = side_pts[:, 1] + offset_a_y
+    edge_buffer = 10
 
-    min_y, min_x = coords.min(axis=0)
-    max_y, max_x = coords.max(axis=0)
+    edge_min_x = max(0, int(side_xs.min()) - edge_buffer)
+    edge_max_x = min(canvas_w-1, int(side_xs.max()) + edge_buffer)
+    edge_min_y = max(0, int(side_ys.min()) - edge_buffer)
+    edge_max_y = min(canvas_h-1, int(side_ys.max()) + edge_buffer)
 
-    region_a = padded_a[min_y:max_y+1, min_x:max_x+1]
-    region_b = padded_b[min_y:max_y+1, min_x:max_x+1]
-
-    cv2.imshow("wawa", region_a)
-    cv2.imshow("wuwu", region_b)
-    cv2.waitKey(0)
+    region_a = padded_a[edge_min_y:edge_max_y, edge_min_x:edge_max_x]
+    region_b = padded_b[edge_min_y:edge_max_y, edge_min_x:edge_max_x]
 
     overlap = (region_a > 0) & (region_b > 0)  # padded
     whitespace = (region_a == 0) & (region_b == 0)
@@ -152,17 +153,8 @@ def reward_function(mask_a: np.ndarray,
     combined[padded_b > 0] = (255, 0, 0)
     combined[(padded_a > 0) & (padded_b > 0)] = (0, 255, 255)
 
-    cv2.rectangle(combined, (min_x, min_y), (max_x, max_y), (255, 255, 255), 2)
-
-    # combined[whitespace] = (255, 255, 255)
-    centroid_a_canvas = (offset_a_x + cx_a, offset_a_y + cy_a)
-    centroid_b_canvas = (offset_b_x + cx_b, offset_b_y + cy_b)
-
-    cv2.circle(combined, centroid_a_canvas, 5, (0, 255, 0), -1)
-    cv2.circle(combined, centroid_b_canvas, 5, (0, 255, 0), -1)
-
-    cv2.circle(combined, (min_x, min_y), 5, (255, 255, 255), -1)
-    cv2.circle(combined, (max_x, max_y), 5, (255, 255, 255), -1)
+    cv2.rectangle(combined, (edge_min_x, edge_min_y),
+                  (edge_max_x, edge_max_y), (255, 255, 255), 2)
 
     cv2.imshow(f"pieces aligned on {side_a} axis", combined)
     cv2.waitKey(0)
@@ -172,7 +164,9 @@ def reward_function(mask_a: np.ndarray,
     whitespace_area = np.sum(whitespace)
     print(f"overlap: {overlap_area} pixels")
     print(f"whitespace: {whitespace_area} pixels")
-    return (0.5 * (similarity_score*1000)) - (0.5 * overlap_area)
+    return ((0.7 * (similarity_score*1000)) -
+            (0.15 * overlap_area) -
+            (0.15 * whitespace_area))
 
 
 def visualize_reward(model_path: str, images: list):
@@ -184,6 +178,13 @@ def visualize_reward(model_path: str, images: list):
     """
     model = PuzzleImageModel(model_name=model_path, device=DEVICE)
     results, similarities, edges = model(images)
+
+    sides = {
+        "bottom": (0, 1),
+        "top": (0, -1),
+        "left": (-1, 0),
+        "right": (1, 0)
+    }
 
     for idx, result in enumerate(results):
         boxes = result.boxes.xyxy
@@ -242,8 +243,18 @@ def visualize_reward(model_path: str, images: list):
 
                     mask1 = piece_masks.get(piece_idx)
                     mask2 = piece_masks.get(match_pid)
+                    poly = results[idx].masks.xy[piece_idx]
+                    pts = np.asarray(poly, dtype=np.float32)
+
+                    # ys, xs = np.where(mask1)
+                    x1, y1, x2, y2 = map(int, boxes[piece_idx])
+                    pts_cropped = pts - np.array([x1, y1])
+                    cur_piece_pts = model.get_side_approx(
+                        pts_cropped, sides
+                    )
                     reward_score = reward_function(mask1,
                                                    mask2,
+                                                   cur_piece_pts,
                                                    edge_side,
                                                    sim_score)
                     if reward_score > max_reward:
@@ -266,35 +277,6 @@ def visualize_reward(model_path: str, images: list):
                             (mx1+5, text_y),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2
                             )
-                """
-                for (_, match_meta, sim_score) in compatible_sims[:5]:
-                    match_pid = match_meta["piece_id"]
-                    match_side = match_meta["side"]
-
-                    if match_pid >= len(boxes):
-                        continue
-
-                    # get the matching piece's bbox
-                    match_box = map(int, boxes[match_pid])
-                    mx1, my1, mx2, my2 = match_box
-                    cv2.rectangle(img, (mx1, my1), (mx2, my2), (255, 0, 0), 2)
-                    text_y = my1 + 20 + text_counts[match_pid]*20
-                    text_counts[match_pid] += 1
-
-                    mask1 = piece_masks.get(piece_idx)
-                    mask2 = piece_masks.get(match_pid)
-                    reward_score = reward_function(mask1,
-                                                   mask2,
-                                                   edge_side,
-                                                   sim_score)
-                    cv2.putText(img,
-                                (
-                                    f"target:{edge_side}->"
-                                    f"this:{match_side}: {reward_score:.3f}"
-                                ),
-                                (mx1+5, text_y),
-                                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2
-                                ) """
 
             cv2.imshow(f"Edge matches for piece {piece_idx}", img)
             cv2.waitKey(0)

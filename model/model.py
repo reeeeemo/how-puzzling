@@ -87,48 +87,14 @@ class PuzzleImageModel(nn.Module):
                 pts[:, 0] = np.clip(pts[:, 0], 0, w-1)
                 pts[:, 1] = np.clip(pts[:, 1], 0, h-1)
 
-                # piece mask for crops
                 pts_i = np.rint(pts).astype(np.int32)
                 mask_piece = np.zeros((h, w), dtype=np.uint8)
                 cv2.fillPoly(mask_piece, [pts_i], 255)
 
-                # compute centroid using moments
-                mu = cv2.moments(pts_i.reshape(-1, 1, 2))
-                if mu.get("m00", 0) == 0:
-                    piece_idx += 1
-                    continue
-                centroid = np.array(
-                    [
-                        mu["m10"] / mu["m00"],
-                        mu["m01"] / mu["m00"]
-                    ],
-                    dtype=np.float64
-                )
+                all_pts = self.get_side_approx(pts, sides)
+                centroid = self.get_centroid(pts)
 
-                new_pts = np.vstack([pts[-1:], pts, pts[:1]])  # cyclic
-                all_pts = {k: [] for k in sides.keys()}
-
-                for cur_pt in new_pts:
-                    radial = cur_pt - centroid  # radial vec
-                    rmag = np.linalg.norm(radial)
-                    if rmag < 1e-12:
-                        continue
-                    radial /= rmag
-
-                    # given all sides find the greatest degree
-                    # use radial for global relativity
-                    best_side, _ = max(
-                        ((
-                          name,
-                          float(np.dot(radial,
-                                       np.asarray(side, dtype=np.float64)))
-                          ) for name, side in sides.items()
-                         ),
-                        key=lambda t: t[1]
-                    )
-                    all_pts[best_side].append((cur_pt, radial))
-
-                # this is where the crop is done
+                # crop
                 for side_name, pts_tuple in all_pts.items():
                     if not pts_tuple or len(pts_tuple) < 2:
                         continue
@@ -211,6 +177,63 @@ class PuzzleImageModel(nn.Module):
                 piece_idx += 1
 
         return edge_metadata
+
+    def get_centroid(self, points):
+        """Compute centroid using moments.
+
+        Args:
+            points: polygon points to get centroid for
+        Returns:
+            tuple of x, y for centroid
+        """
+        pts_i = np.rint(points).astype(np.int32)
+
+        mu = cv2.moments(pts_i.reshape(-1, 1, 2))
+        if mu.get("m00", 0) == 0:
+            return None
+        centroid = np.array(
+            [
+                mu["m10"] / mu["m00"],
+                mu["m01"] / mu["m00"]
+            ],
+            dtype=np.float64
+        )
+        return centroid
+
+    def get_side_approx(self, points, sides: dict):
+        """Get all side approximations of a polygon.
+
+        Args:
+            points: polygon points to approximate
+            sides: dict of sides + unit vectors that can be approximated
+        Returns:
+            dict of a points list for every side
+        """
+        centroid = self.get_centroid(points)
+
+        new_pts = np.vstack([points[-1:], points, points[:1]])  # cyclic
+        all_pts = {k: [] for k in sides.keys()}
+
+        for cur_pt in new_pts:
+            radial = cur_pt - centroid  # radial vec
+            rmag = np.linalg.norm(radial)
+            if rmag < 1e-12:
+                continue
+            radial /= rmag
+
+            # given all sides find the greatest degree
+            # use radial for global relativity
+            best_side, _ = max(
+                ((
+                  name,
+                  float(np.dot(radial,
+                        np.asarray(side, dtype=np.float64)))
+                  ) for name, side in sides.items()
+                 ),
+                key=lambda t: t[1]
+            )
+            all_pts[best_side].append((cur_pt, radial))
+        return all_pts
 
     def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
         """Return True if side is flat, else false
