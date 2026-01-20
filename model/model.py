@@ -178,6 +178,34 @@ class PuzzleImageModel(nn.Module):
 
         return edge_metadata
 
+    def classify_piece(self, edge_metadata: dict) -> str:
+        """Classifies a puzzle piece based on its flat sides.
+
+        Args:
+            edge_metadata: dict of side, list of pts
+        Returns:
+            Side type (internal, corner, side_{side_type})
+        """
+        flats = {}
+        for side, pts in edge_metadata.items():
+            vertical = side not in ("top", "bottom")
+            all_pts = [pt for pt, _ in pts]
+            flats[side] = self.is_flat_side(all_pts,
+                                            epsilon=30,
+                                            vertical=vertical)
+
+        flat_sides = [side for side, is_flat in flats.items() if is_flat]
+        flat_count = len(flat_sides)
+        # can only have 0-2 flats, 2 and 0 are defined while 1 is ambigous
+        if flat_count == 0:
+            return "internal"
+        if flat_count == 1:
+            return f"side_{flat_sides[0]}"
+        if flat_count == 2:
+            sorted_flats = sorted(flat_sides)
+            return f"corner_{sorted_flats[0]}_{sorted_flats[1]}"
+        return "unknown"
+
     def get_centroid(self, points):
         """Compute centroid using moments.
 
