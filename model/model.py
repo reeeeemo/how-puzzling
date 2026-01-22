@@ -101,13 +101,14 @@ class PuzzleImageModel(nn.Module):
 
                     pts_side = [pt for pt, _ in pts_tuple]
                     radials = [r for _, r in pts_tuple]
+                    cur_type = self.classify_edge_type(
+                        points=pts_side,
+                        centroid=centroid,
+                        side=side_name,
+                        epsilon_flat=30
+                    )
 
-                    if self.is_flat_side(pts_side,
-                                         epsilon=30,
-                                         vertical=(
-                                             side_name not in ["top", "bottom"]
-                                             )
-                                         ):
+                    if cur_type == "flat":
                         continue
 
                     inner_points = []
@@ -178,33 +179,41 @@ class PuzzleImageModel(nn.Module):
 
         return edge_metadata
 
-    def classify_piece(self, edge_metadata: dict) -> str:
+    def classify_piece(self,
+                       edge_metadata: dict,
+                       centroid: np.ndarray) -> tuple[str, dict]:
         """Classifies a puzzle piece based on its flat sides.
 
         Args:
             edge_metadata: dict of side, list of pts
+            centroid: tuple of (x,y) pertaining to polygon center
         Returns:
-            Side type (internal, corner, side_{side_type})
+            Tuple of:
+             - Piece type (internal, corner, side_{side_type})
+             - All side types (flat, knob, hole)
         """
-        flats = {}
+        sides = {}
         for side, pts in edge_metadata.items():
-            vertical = side not in ("top", "bottom")
             all_pts = [pt for pt, _ in pts]
-            flats[side] = self.is_flat_side(all_pts,
-                                            epsilon=30,
-                                            vertical=vertical)
+            cur_type = self.classify_edge_type(
+                points=all_pts,
+                centroid=centroid,
+                side=side,
+            )
+            sides[side] = cur_type
 
-        flat_sides = [side for side, is_flat in flats.items() if is_flat]
+        flat_sides = [s for s, typ in sides.items()
+                      if typ == "flat"]
         flat_count = len(flat_sides)
         # can only have 0-2 flats, 2 and 0 are defined while 1 is ambigous
         if flat_count == 0:
-            return "internal"
+            return "internal", sides
         if flat_count == 1:
-            return f"side_{flat_sides[0]}"
+            return f"side_{flat_sides[0]}", sides
         if flat_count == 2:
             sorted_flats = sorted(flat_sides)
-            return f"corner_{sorted_flats[0]}_{sorted_flats[1]}"
-        return "unknown"
+            return f"corner_{sorted_flats[0]}_{sorted_flats[1]}", sides
+        return "unknown", sides
 
     def get_centroid(self, points):
         """Compute centroid using moments.
@@ -251,7 +260,7 @@ class PuzzleImageModel(nn.Module):
 
             # given all sides find the greatest degree
             # use radial for global relativity
-            best_side, _ = max(
+            best_side, best_score = max(
                 ((
                   name,
                   float(np.dot(radial,
@@ -260,9 +269,49 @@ class PuzzleImageModel(nn.Module):
                  ),
                 key=lambda t: t[1]
             )
-            all_pts[best_side].append((cur_pt, radial))
+            if best_score > 0.707:
+                all_pts[best_side].append((cur_pt, radial))
         return all_pts
 
+    def classify_edge_type(
+        self,
+        points: np.ndarray,
+        centroid: np.ndarray,
+        side: str,
+        epsilon_flat: int = 30,
+        epsilon_curve: int = 90
+         ):
+        """Classifies edge from a baseline deviation.
+
+        Args:
+            points: numpy array of (x, y) tuples along an edge
+            centroid: tuple of (x, y) centroid along the polygon
+            side: current side of the edge being classified
+            epsilon_flat: Threshold for deviation of a flat line
+            k: Amt of points to consider for curve
+        Returns:
+            "knob", "hole", or "flat"
+        """
+        # if side is vertical, check x, else y
+        vertical = side not in ["top", "bottom"]
+        pts = np.array(points)
+        coord = 1 - int(vertical)
+
+        relevant_coords = pts[:, coord]
+        min_val = np.min(relevant_coords)
+        max_val = np.max(relevant_coords)
+        side_range = max_val - min_val
+
+        if side_range <= epsilon_flat:
+            return "flat"
+
+        # not flat, so determine knob or hole
+        mid_val = relevant_coords[len(relevant_coords) // 2]
+        distance = np.abs(centroid[coord] - mid_val)
+
+        return "knob" if distance > epsilon_curve else "hole"
+
+    # replacing this with classify_edge_type
     def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
         """Return True if side is flat, else false
 

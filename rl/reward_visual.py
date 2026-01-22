@@ -7,6 +7,7 @@ import numpy as np
 import cv2
 from collections import defaultdict
 from similarity.similarity import get_compatible_similarities
+import heapq
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -49,10 +50,10 @@ def pad_offset_to_size(img: np.ndarray, target_size: tuple, offset: tuple):
     h, w = img.shape[:2]
     y_offset, x_offset = offset
 
-    pad_top = y_offset
-    pad_bottom = target_h - h - pad_top
-    pad_left = x_offset
-    pad_right = target_w - w - pad_left
+    pad_top = max(0, y_offset)
+    pad_bottom = max(0, (target_h - h - pad_top))
+    pad_left = max(0, x_offset)
+    pad_right = max(0, (target_w - w - pad_left))
 
     padded = cv2.copyMakeBorder(
         img,
@@ -70,10 +71,20 @@ def reward_function(mask_a: np.ndarray,
                     pts_b: dict,
                     side_a: str,
                     side_b: str,
-                    similarity_score: float):
+                    similarity_score: float,
+                    i: int):  # i = temp
     """Given 2 boxes, return the reward for both opposing pieces.
 
-    Reward: whitespace + overlap + top similar
+    Args:
+        mask_a: current piece mask
+        mask_b: piece mask to match
+        pts_a: dict of piece side, ordered pts
+        pts_b: dict of match side, ordered pts
+        side_a: current piece side
+        side_b: matching piece side
+        similarity_score: sim score between 2 edges
+    Returns:
+        Reward: whitespace + overlap + top similar
     """
     if mask_a is None or mask_b is None or similarity_score <= 0:
         return -5.0
@@ -81,17 +92,17 @@ def reward_function(mask_a: np.ndarray,
     h_a, w_a = mask_a.shape[:2]
     h_b, w_b = mask_b.shape[:2]
 
+    # polygon centroid
     centroid_a = get_centroid(mask_a)
     centroid_b = get_centroid(mask_b)
-
     if not centroid_a or not centroid_b:
         return -5.0
 
+    # current side polygon to check
     pts_a_side = pts_a.get(side_a, [])
     if len(pts_a_side) == 0:
         return -5.0
     side_a_pts = np.array([pt for pt, _ in pts_a_side])
-
     pts_b_side = pts_b.get(side_b, [])
     if len(pts_b_side) == 0:
         return -5.0
@@ -101,13 +112,21 @@ def reward_function(mask_a: np.ndarray,
     cy_b, cx_b = centroid_b
     padding = 50
     overlap_percentage = 0.3
-    # overlap_distance_y = 75
-    # overlap_distance_x = 60
+    k = 0.15
 
-    # compute max width/height + any padding then offset by polygon centroid
+    # compute max width/height,
+    # offset by the mean of 15% of the middle points
+    # and offset by any padding when making same-size images
+    # finally, overlap both pieces by 30% of the distance between them
     if side_a in ["right", "left"]:
-        mid_y_a = side_a_pts[:, 1].mean()
-        mid_y_b = side_b_pts[:, 1].mean()
+        n_a = len(side_a_pts[:, 1])
+        n_b = len(side_b_pts[:, 1])
+        mid_y_a = side_a_pts[:, 1][
+            int(n_a // 2 - (n_a * k)):int(n_a // 2 + (n_a * k))
+        ].mean()
+        mid_y_b = side_b_pts[:, 1][
+            int(n_b // 2 - (n_b * k)):int(n_b // 2 + (n_b * k))
+        ].mean()
         dist_a = abs(cx_a - side_a_pts[:, 0].mean())
         dist_b = abs(cx_b - side_b_pts[:, 0].mean())
         overlap_distance_x = int((dist_a + dist_b) * overlap_percentage)
@@ -124,10 +143,17 @@ def reward_function(mask_a: np.ndarray,
             offset_a_x = padding + w_b - overlap_distance_x
             offset_b_x = padding
 
-        offset_b_y = int(offset_a_y + (mid_y_a - mid_y_b))  # cy_a - cy_b
+        offset_b_y = int(offset_a_y + (mid_y_a - mid_y_b))
     else:
-        mid_x_a = side_a_pts[:, 0].mean()
-        mid_x_b = side_b_pts[:, 0].mean()
+        n_a = len(side_a_pts[:, 0])
+        n_b = len(side_b_pts[:, 0])
+
+        mid_x_a = side_a_pts[:, 0][
+            int(n_a // 2 - (n_a * k)):int(n_a // 2 + (n_a * k))
+        ].mean()
+        mid_x_b = side_b_pts[:, 0][
+            int(n_b // 2 - (n_b * k)):int(n_b // 2 + (n_b * k))
+        ].mean()
         dist_a = abs(cy_a - side_a_pts[:, 1].mean())
         dist_b = abs(cy_b - side_b_pts[:, 1].mean())
         overlap_distance_y = int((dist_a + dist_b) * overlap_percentage)
@@ -144,8 +170,10 @@ def reward_function(mask_a: np.ndarray,
             offset_a_y = padding + h_b - overlap_distance_y
             offset_b_y = padding
 
-        offset_b_x = int(offset_a_x + (mid_x_a - mid_x_b))  # cx_a - cx_b
+        offset_b_x = int(offset_a_x + (mid_x_a - mid_x_b))
+        offset_b_x = max(0, min(offset_b_x, canvas_w - w_b))
 
+    # pad actual masks to the correct size and move to offset
     padded_a = pad_offset_to_size(mask_a,
                                   (canvas_h, canvas_w),
                                   (offset_a_y, offset_a_x))
@@ -162,6 +190,7 @@ def reward_function(mask_a: np.ndarray,
     edge_min_y = max(0, int(side_ys.min()) - edge_buffer)
     edge_max_y = min(canvas_h-1, int(side_ys.max()) + edge_buffer)
 
+    # compute overlap of both edges given their bbox
     region_a = padded_a[edge_min_y:edge_max_y, edge_min_x:edge_max_x]
     region_b = padded_b[edge_min_y:edge_max_y, edge_min_x:edge_max_x]
 
@@ -189,17 +218,16 @@ def reward_function(mask_a: np.ndarray,
                    (255, 0, 0),
                    2)
 
-    cv2.imshow(f"pieces aligned on {side_a} axis", combined)
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    # cv2.imshow(f"pieces e_{i} aligned on {side_a} axis", combined)
+    # cv2.waitKey(0)
 
     overlap_area = np.sum(overlap)
     whitespace_area = np.sum(whitespace)
     print(f"overlap: {overlap_area} pixels")
     print(f"whitespace: {whitespace_area} pixels")
-    return ((0.6 * (similarity_score*1000)) -
-            (0.08 * overlap_area) -
-            (0.12 * whitespace_area))
+    return ((similarity_score*1000) -
+            (0.1 * overlap_area) -
+            (0.05 * whitespace_area))
 
 
 def visualize_reward(model_path: str, images: list):
@@ -256,9 +284,14 @@ def visualize_reward(model_path: str, images: list):
                         (255, 255, 255), 2)
 
             cur_piece = polys.get(piece_idx)
-            piece_type = model.classify_piece(cur_piece)
+            centroid = get_centroid(piece_masks[piece_idx])
+            piece_type, piece_sides = model.classify_piece(
+                cur_piece,
+                (centroid[1], centroid[0])
+            )
 
             text_counts = defaultdict(int)
+            all_matches = []
             for edge_idx in piece_edges:
                 edge_side = edges[edge_idx]["side"]
                 sim_col = similarities[edge_idx, :]
@@ -270,67 +303,53 @@ def visualize_reward(model_path: str, images: list):
                     similarity_column=sim_col
                 )
 
-                max_reward = float("-inf")
-                max_piece_idx = -1
-                for compat_idx, (_,
-                                 match_meta,
-                                 sim_score) in enumerate(compatible_sims[:5]):
-                    match_pid = match_meta["piece_id"]
-                    match_side = match_meta["side"]
+                top_idxs = get_top_n_compatible_sims(
+                    compatible_sims=compatible_sims,
+                    model=model,
+                    polys=polys,
+                    piece_masks=piece_masks,
+                    cur_piece=cur_piece,
+                    cur_piece_type=piece_type,
+                    cur_piece_sides=piece_sides,
+                    cur_piece_mask=piece_masks.get(piece_idx),
+                    cur_edge=edge_side,
+                    n=10
+                )
 
-                    if match_pid >= len(boxes):
-                        continue
+                for reward, compat_idx in top_idxs:
+                    match_pid = compatible_sims[compat_idx][1]["piece_id"]
+                    match_side = compatible_sims[compat_idx][1]["side"]
+                    all_matches.append((
+                        reward, edge_idx,
+                        compat_idx, match_pid,
+                        match_side, edge_side
+                    ))
 
-                    match_piece = polys.get(match_pid)
-                    match_type = model.classify_piece(match_piece)
+            all_matches.sort(reverse=True, key=lambda x: x[0])
+            assigned_edges = set()
+            assigned_pieces = set()
+            text_counts = defaultdict(int)
 
-                    # side-to-side can only be same-border
-                    if (
-                        match_type.startswith("side_") and
-                        piece_type.startswith("side_") and
-                        match_type != piece_type
-                       ):
-                        continue
-                    # corner can only merge with same-side or other corners
-                    piece_is_corner = piece_type.startswith("corner_")
-                    match_is_corner = match_type.startswith("corner_")
-                    if (piece_is_corner or match_is_corner):
-                        if piece_is_corner and match_type.startswith("side_"):
-                            corners = set(piece_type.split("_")[1:])
-                            sides = set(match_side.split("_")[1:])
-                            if not corners & sides:
-                                continue  # no shared border
-                        if match_is_corner and piece_type.startswith("side_"):
-                            corners = set(match_type.split("_")[1:])
-                            sides = set(piece_type.split("_")[1:])
-                            if not corners & sides:
-                                continue  # still no shared border :/
+            for (
+                reward, edge_idx,
+                compat_idx, match_pid,
+                match_side, edge_side
+            ) in all_matches:
+                if edge_idx in assigned_edges or match_pid in assigned_pieces:
+                    continue
 
-                    reward_score = reward_function(
-                        mask_a=piece_masks.get(piece_idx),
-                        mask_b=piece_masks.get(match_pid),
-                        pts_a=cur_piece,
-                        pts_b=match_piece,
-                        side_a=edge_side,
-                        side_b=match_side,
-                        similarity_score=sim_score
-                    )
-                    if reward_score > max_reward:
-                        max_reward = reward_score
-                        max_piece_idx = compat_idx
+                assigned_edges.add(edge_idx)
+                assigned_pieces.add(match_pid)
 
                 # place highest rated pid
-                match_pid = compatible_sims[max_piece_idx][1]["piece_id"]
-                match_side = compatible_sims[max_piece_idx][1]["side"]
-                match_box = map(int, boxes[match_pid])
-                mx1, my1, mx2, my2 = match_box
+                mx1, my1, mx2, my2 = map(int, boxes[match_pid])
                 cv2.rectangle(img, (mx1, my1), (mx2, my2), (255, 0, 0), 2)
                 text_y = my1 + 20 + text_counts[match_pid]*20
                 text_counts[match_pid] += 1
                 cv2.putText(img,
                             (
                                 f"target:{edge_side}->"
-                                f"this:{match_side}: {max_reward:.3f}"
+                                f"this:{match_side}: {reward:.3f}"
                             ),
                             (mx1+5, text_y),
                             cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 0, 255), 2
@@ -339,6 +358,65 @@ def visualize_reward(model_path: str, images: list):
             cv2.imshow(f"Edge matches for piece {piece_idx}", img)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
+
+
+def get_top_n_compatible_sims(
+        compatible_sims: list[tuple],
+        model: PuzzleImageModel,
+        polys: dict,
+        piece_masks: dict,
+        cur_piece: np.ndarray,
+        cur_piece_type: str,
+        cur_piece_sides: dict,
+        cur_piece_mask: np.ndarray,
+        cur_edge: str,
+        n: int
+     ) -> list[tuple]:
+    top_n_piece_idxs = []
+
+    for compat_idx, (_,
+                     match_meta,
+                     sim_score) in enumerate(compatible_sims[:5]):
+        match_pid = match_meta["piece_id"]
+        match_side = match_meta["side"]
+        match_mask = piece_masks.get(match_pid)
+
+        match_piece = polys.get(match_pid)
+        centroid = get_centroid(match_mask)
+        match_type, match_sides = model.classify_piece(
+            match_piece,
+            (centroid[1], centroid[0])
+        )
+
+        # side-to-side can only be same-border
+        if (
+            match_type.startswith("side_") and
+            cur_piece_type.startswith("side_") and
+            match_type != cur_piece_type
+           ):
+            continue
+
+        # no knob -> knob or hole -> hole
+        if (match_sides.get(match_side, "") ==
+           cur_piece_sides.get(cur_edge, "")):
+            continue
+
+        reward_score = reward_function(
+            mask_a=cur_piece_mask,  # piece_masks.get(piece_idx),
+            mask_b=match_mask,
+            pts_a=cur_piece,
+            pts_b=match_piece,
+            side_a=cur_edge,
+            side_b=match_side,
+            similarity_score=sim_score,
+            i=compat_idx
+        )
+
+        if len(top_n_piece_idxs) < n:
+            heapq.heappush(top_n_piece_idxs, (reward_score, compat_idx))
+        elif reward_score > top_n_piece_idxs[0][0]:
+            heapq.heapreplace(top_n_piece_idxs, (reward_score, compat_idx))
+    return sorted(top_n_piece_idxs, reverse=True)
 
 
 def get_polygon_sides(poly, bbox, model: PuzzleImageModel) -> dict:
@@ -352,7 +430,7 @@ def get_polygon_sides(poly, bbox, model: PuzzleImageModel) -> dict:
     pts = np.asarray(poly, dtype=np.float32)
     dense_pts = model.densify_polygons(pts, step=1)
 
-    x1, y1, x2, y2 = map(int, bbox)
+    x1, y1, _, _ = map(int, bbox)
     pts_cropped = dense_pts - np.array([x1, y1])
     return model.get_side_approx(
         pts_cropped, sides

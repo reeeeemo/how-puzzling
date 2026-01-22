@@ -29,9 +29,9 @@ class Puzzler(gym.Env):
         self.orig_image = puzzle_image
 
         (
+            self.results,
             self.similarities,
-            self.all_boxes,
-            self.edges
+            self.edges_metadata
         ) = self.model(puzzle_image)
 
         # a1: pick piece, a2: connect edge
@@ -40,7 +40,7 @@ class Puzzler(gym.Env):
         # all valid edges are our states
         self.observation_space = spaces.Box(
             low=0,
-            high=len(self.edges),
+            high=len(self.edges_metadata),
             shape=(1,),
             dtype=np.int32
         )
