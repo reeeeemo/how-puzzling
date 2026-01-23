@@ -223,8 +223,6 @@ def reward_function(mask_a: np.ndarray,
 
     overlap_area = np.sum(overlap)
     whitespace_area = np.sum(whitespace)
-    print(f"overlap: {overlap_area} pixels")
-    print(f"whitespace: {whitespace_area} pixels")
     return ((similarity_score*1000) -
             (0.1 * overlap_area) -
             (0.05 * whitespace_area))
@@ -292,6 +290,7 @@ def visualize_reward(model_path: str, images: list):
 
             text_counts = defaultdict(int)
             all_matches = []
+            print(f"\n\nPiece {piece_idx}")
             for edge_idx in piece_edges:
                 edge_side = edges[edge_idx]["side"]
                 sim_col = similarities[edge_idx, :]
@@ -387,6 +386,8 @@ def get_top_n_compatible_sims(
             match_piece,
             (centroid[1], centroid[0])
         )
+        print((f"match: {match_sides.get(match_side, "")}."
+               f"cur_piece: {cur_piece_sides.get(cur_edge, "")}"))
 
         # side-to-side can only be same-border
         if (
