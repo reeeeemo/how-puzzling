@@ -108,23 +108,6 @@ class PuzzleImageModel(nn.Module):
                         epsilon_flat=30
                     )
 
-                    if cur_type == "knob":
-                        color = (255, 0, 0)
-                    elif cur_type == "hole":
-                        color = (0, 255, 0)
-                    else:
-                        color = (255, 255, 255)
-
-                    for pt_i in pts_side:
-                        cv2.circle(
-                            img,
-                            (int(pt_i[0]), int(pt_i[1])),
-                            radius=2,
-                            color=color,
-                            thickness=2
-                        )
-                    print(f"side: {side_name}. edge: {cur_type}")
-
                     if cur_type == "flat":
                         continue
 
@@ -193,10 +176,7 @@ class PuzzleImageModel(nn.Module):
                         "crop": cropped,
                     })
                 piece_idx += 1
-                print("\n\n")
-                cv2.imshow(f"wah {piece_idx}", img)
-                cv2.waitKey(0)
-                cv2.destroyAllWindows()
+
         return edge_metadata
 
     def classify_piece(self,
@@ -235,17 +215,21 @@ class PuzzleImageModel(nn.Module):
             return f"corner_{sorted_flats[0]}_{sorted_flats[1]}", sides
         return "unknown", sides
 
-    def get_centroid(self, points):
+    def get_centroid(self, points: np.ndarray, binary_mask: bool = False):
         """Compute centroid using moments.
 
         Args:
             points: polygon points to get centroid for
+            binary_mask: whether we are computing centroid of bin mask or poly
         Returns:
             tuple of x, y for centroid
         """
-        pts_i = np.rint(points).astype(np.int32)
+        if not binary_mask:
+            pts_i = np.rint(points).astype(np.int32)
+            mu = cv2.moments(pts_i.reshape(-1, 1, 2))
+        else:
+            mu = cv2.moments(points)
 
-        mu = cv2.moments(pts_i.reshape(-1, 1, 2))
         if mu.get("m00", 0) == 0:
             return None
         centroid = np.array(
@@ -299,7 +283,7 @@ class PuzzleImageModel(nn.Module):
         centroid: np.ndarray,
         side: str,
         epsilon_flat: int = 30,
-        epsilon_curve: int = 110
+        epsilon_curve: int = 100
          ):
         """Classifies edge from a baseline deviation.
 
@@ -328,7 +312,6 @@ class PuzzleImageModel(nn.Module):
         # not flat, so determine knob or hole
         mid_val = relevant_coords[len(relevant_coords) // 2]
         distance = np.abs(centroid[coord] - mid_val)
-        print(f"dist: {float(distance)}")
         return "knob" if distance > epsilon_curve else "hole"
 
     # replacing this with classify_edge_type

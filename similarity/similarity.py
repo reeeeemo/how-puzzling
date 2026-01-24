@@ -6,6 +6,7 @@ from model.model import PuzzleImageModel
 from dataset.dataset import PuzzleDataset
 import argparse
 from collections import defaultdict
+from utils.polygons import create_binary_mask, get_polygon_sides
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -25,7 +26,10 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #   --split test
 
 
-def compute_similarites(model_path: Path, dataset_path: Path, split: str):
+def compute_similarites(
+        model: PuzzleImageModel,
+        dataset_path: Path,
+        split: str):
     """Get the similarity matrix of the requested split.
 
     Args:
@@ -40,7 +44,6 @@ def compute_similarites(model_path: Path, dataset_path: Path, split: str):
             dict of all edge data.
     """
 
-    model = PuzzleImageModel(model_name=str(model_path), device=DEVICE)
     dataset = PuzzleDataset(root_dir=dataset_path,
                             splits=[split],
                             extension="jpg")
@@ -86,13 +89,26 @@ def visualize_edge_crop(crop,
 def get_compatible_similarities(edge_side: str,
                                 edge_metadata: dict,
                                 cur_piece_idx: int,
+                                poly_sides: dict,
+                                piece_masks: dict,
+                                cur_piece_type: str,
+                                cur_piece_sides: dict,
+                                model: PuzzleImageModel,
                                 similarity_column):
-    """Compute opposing edge similarities, rank then return.
+    """Compute opposing edge similarities if valid, rank then return.
+
+    Valid puzzle piece edges are of different types, and do not break
+    any jigsaw puzzle piece rules (no out of bounds pieces).
 
     Args:
-        edge_side: current edge side
+        edge_side: current edge side to compare against
         edge_metadata: information about every edge
         cur_piece_idx: current puzzle piece ID
+        poly_sides: all dicts of sides, list of pts of puzzle pieces
+        piece_masks: dict of binary masks for every puzzle piece
+        cur_piece_type: current type of the puzzle piece (side, corner, etc.)
+        cur_piece_sides: dict of types for each side of a piece (knob, hole)
+        model: Model to run inference on
         similarity_column: cosine sim mat for all edges
     Returns:
         list of compatible similarities, ranked.
@@ -104,11 +120,33 @@ def get_compatible_similarities(edge_side: str,
         "right": "left"
     }[edge_side]
 
-    compatible_edges = [
-        (i, meta) for i, meta in enumerate(edge_metadata)
-        if meta["side"] == opposite
-        and meta["piece_id"] != cur_piece_idx
-    ]
+    compatible_edges = []
+
+    for i, meta in enumerate(edge_metadata):
+        if meta["side"] == opposite and meta["piece_id"] != cur_piece_idx:
+            match_pid = meta["piece_id"]
+            match_side = meta["side"]
+            match_mask = piece_masks.get(match_pid)
+            centroid = model.get_centroid(match_mask, binary_mask=True)
+
+            match_type, match_sides = model.classify_piece(
+                poly_sides.get(match_pid),
+                centroid
+            )
+
+            # side-to-side can only be same-border
+            if (
+                match_type.startswith("side_") and
+                cur_piece_type.startswith("side_") and
+                match_type != cur_piece_type
+            ):
+                continue
+
+            # no knob -> knob or hole -> hole
+            if (match_sides.get(match_side) ==
+               cur_piece_sides.get(edge_side)):
+                continue
+            compatible_edges.append((i, meta))
 
     if not compatible_edges:
         return None
@@ -169,6 +207,7 @@ def plot_n_similar_edges(sim_mat,
 
 
 def visualize_similarities(results: list,
+                           model: PuzzleImageModel,
                            sims,
                            images: list,
                            edge_metadata: dict):
@@ -176,12 +215,30 @@ def visualize_similarities(results: list,
 
     Args:
         results: YOLO-style results list
+        model: model to run inference on
         sims: cosine sim mat of edge similarities
         images: list of images inferenced
         edge_metadata: info about every edge
     """
     for idx, result in enumerate(results):
         boxes = result.boxes.xyxy
+
+        # precompute binary mask + polygon sides
+        poly_sides = {}
+        piece_masks = {}
+        for pid in range(len(boxes)):
+            if pid >= len(results[idx].masks.xy):
+                piece_masks[pid] = None
+                poly_sides[pid] = None
+                continue
+            poly = result.masks.xy[pid]
+            piece_masks[pid] = create_binary_mask(
+                poly=poly, box=boxes[pid], img_shape=images[idx].shape[:2]
+            )
+            poly_sides[pid] = get_polygon_sides(
+                poly=poly, bbox=boxes[pid], model=model
+            )
+
         for piece_idx in range(len(boxes)):
             piece_edges = [i for i, meta in enumerate(edge_metadata)
                            if meta["piece_id"] == piece_idx]
@@ -199,6 +256,16 @@ def visualize_similarities(results: list,
                         0.7,
                         (255, 255, 255), 2)
 
+            # get current piece info once
+            cur_piece_centroid = model.get_centroid(
+                piece_masks[piece_idx],
+                binary_mask=True
+            )
+            cur_piece_type, cur_piece_sides = model.classify_piece(
+                edge_metadata=poly_sides.get(piece_idx),
+                centroid=cur_piece_centroid
+            )
+
             text_counts = defaultdict(int)
             edge_crops_display = []
             for edge_idx in piece_edges:
@@ -208,6 +275,11 @@ def visualize_similarities(results: list,
 
                 compatible_sims = get_compatible_similarities(
                     edge_side=edge_side,
+                    poly_sides=poly_sides,
+                    piece_masks=piece_masks,
+                    cur_piece_type=cur_piece_type,
+                    cur_piece_sides=cur_piece_sides,
+                    model=model,
                     edge_metadata=edge_metadata,
                     cur_piece_idx=piece_idx,
                     similarity_column=sim_col
@@ -269,13 +341,20 @@ def main():
     model_path = project_path / args.model
     dataset_path = project_path / args.dataset
 
+    model = PuzzleImageModel(model_name=str(model_path), device=DEVICE)
     (
         results,
         sims,
         images,
         edge_metadata
-    ) = compute_similarites(model_path, dataset_path, args.split)
-    visualize_similarities(results, sims, images, edge_metadata)
+    ) = compute_similarites(model, dataset_path, args.split)
+    visualize_similarities(
+        results=results,
+        model=model,
+        sims=sims,
+        images=images,
+        edge_metadata=edge_metadata
+    )
 
 
 if __name__ == "__main__":
