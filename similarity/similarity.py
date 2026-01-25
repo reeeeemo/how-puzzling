@@ -113,12 +113,13 @@ def get_compatible_similarities(edge_side: str,
     Returns:
         list of compatible similarities, ranked.
     """
-    opposite = {
+    opposites = {
         "top": "bottom",
         "bottom": "top",
         "left": "right",
         "right": "left"
-    }[edge_side]
+    }
+    opposite = opposites[edge_side]
 
     compatible_edges = []
 
@@ -141,6 +142,23 @@ def get_compatible_similarities(edge_side: str,
                 match_type != cur_piece_type
             ):
                 continue
+
+            # if we have a side and internal piece
+            # has to be opposite of flat side
+            if (
+                cur_piece_type.startswith("side_")
+                and match_type == "internal"
+               ):
+                cur_flat_edge = cur_piece_type.split("_")[1]
+                if edge_side != opposites[cur_flat_edge]:
+                    continue
+            elif (
+                  cur_piece_type == "internal"
+                  and match_type.startswith("side_")
+               ):
+                match_flat_edge = match_type.split("_")[1]
+                if opposite != opposites[match_flat_edge]:
+                    continue
 
             # no knob -> knob or hole -> hole
             if (match_sides.get(match_side) ==

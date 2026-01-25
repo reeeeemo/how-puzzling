@@ -185,12 +185,17 @@ def reward_function(mask_a: np.ndarray,
     region_a = padded_a[edge_min_y:edge_max_y, edge_min_x:edge_max_x]
     region_b = padded_b[edge_min_y:edge_max_y, edge_min_x:edge_max_x]
 
-    edge_a = cv2.Canny(region_a, 50, 150)
-    edge_b = cv2.Canny(region_b, 50, 150)
-    edge_distance = cv2.matchShapes(edge_a, edge_b, cv2.CONTOURS_MATCH_I1, 0)
+    # https://docs.opencv.org/3.4/da/d22/tutorial_py_canny.html
+    # https://docs.opencv.org/3.4/d5/d45/tutorial_py_contours_more_functions.html
+    edge_a = cv2.Canny(region_a, 100, 200)
+    edge_b = cv2.Canny(region_b, 100, 200)
 
-    # overlap = (region_a > 0) & (region_b > 0)  # padded
-    # whitespace = (region_a == 0) & (region_b == 0)
+    edge_distance = cv2.matchShapes(
+        edge_a,
+        edge_b,
+        cv2.CONTOURS_MATCH_I1,
+        0
+    )
 
     # visualize the masks
 
