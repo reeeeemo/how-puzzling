@@ -50,7 +50,7 @@ class PuzzleImageModel(nn.Module):
             List of dicts tracking piece, side, and crop for every image.
         """
         results = self.model(imgs, verbose=False)
-        edge_metadata = self.extract_all_edges(results, edge_width=80)
+        edge_metadata = self.extract_all_edges(results, edge_width=15)
         similarities = self.compute_similarities(
             [data.get("crop") for data in edge_metadata]
         )
@@ -72,8 +72,7 @@ class PuzzleImageModel(nn.Module):
             "left": (-1, 0),
             "right": (1, 0)
         }
-
-        for result in results:  # all image segmentation results
+        for image_i, result in enumerate(results):
             img = result.orig_img
             h, w = img.shape[:2]
 
@@ -100,7 +99,7 @@ class PuzzleImageModel(nn.Module):
                         continue
 
                     pts_side = [pt for pt, _ in pts_tuple]
-                    radials = [r for _, r in pts_tuple]
+                    # radials = [r for _, r in pts_tuple]
                     cur_type = self.classify_edge_type(
                         points=pts_side,
                         centroid=centroid,
@@ -110,7 +109,22 @@ class PuzzleImageModel(nn.Module):
 
                     if cur_type == "flat":
                         continue
+                    elif cur_type == "knob":
+                        color = (255, 0, 0)
+                    else:
+                        color = (0, 255, 0)
 
+                    for pt in pts_side:
+                        cv2.circle(
+                            img,
+                            (int(pt[0]), int(pt[1])),
+                            2, color, 2
+                        )
+
+                    # computes tangent instead of edge crop
+                    # not removing for now, for comparative
+                    # purposes, but we'll see
+                    """
                     inner_points = []
 
                     for i in range(len(pts_side)):
@@ -142,18 +156,38 @@ class PuzzleImageModel(nn.Module):
                     y_min = max(0, y_min)
                     x_max = min(w, x_max)
                     y_max = min(h, y_max)
-
+                    """
+                    pts_side_i = np.array(pts_side, dtype=np.int32)
+                    x_min = max(0, pts_side_i[:, 0].min() - edge_width)
+                    x_max = min(w, pts_side_i[:, 0].max() + edge_width)
+                    y_min = max(0, pts_side_i[:, 1].min() - edge_width)
+                    y_max = min(h, pts_side_i[:, 1].max() + edge_width)
                     if x_max <= x_min or y_max <= y_min:
                         continue
 
                     # create mask then mask within piece mask to stay in piece
                     kernel = np.ones((7, 7), np.uint8)
-                    mask_piece_closed = cv2.morphologyEx(mask_piece,
-                                                         cv2.MORPH_CLOSE,
-                                                         kernel)
+                    mask_piece_closed = cv2.morphologyEx(
+                        mask_piece,
+                        cv2.MORPH_CLOSE,
+                        kernel
+                    )
 
-                    # fix polygon artifacts
-                    mask = np.zeros((h, w), dtype=np.uint8)
+                    mask_region = mask_piece_closed[y_min:y_max, x_min:x_max]
+                    mask_region = cv2.morphologyEx(
+                        mask_region,
+                        cv2.MORPH_CLOSE, kernel
+                    )
+
+                    img_region = img[y_min:y_max, x_min:x_max]
+                    cropped = cv2.bitwise_and(
+                        img_region,
+                        img_region,
+                        mask=mask_region
+                    )
+
+                    # fix artifacts (dead code, will remove once fix)
+                    """mask = np.zeros((h, w), dtype=np.uint8)
                     cv2.fillPoly(mask, [strip_pts], 255)
                     mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
                     mask = cv2.bitwise_and(mask, mask_piece_closed)
@@ -167,16 +201,18 @@ class PuzzleImageModel(nn.Module):
                     result_img = cv2.bitwise_and(img, img, mask=mask)
                     cropped = result_img[y_min:y_max, x_min:x_max]
                     mask_crop = mask[y_min:y_max, x_min:x_max]  # cleaner edges
-
                     cropped = cv2.bitwise_and(cropped, cropped, mask=mask_crop)
-
+                    """
+                    # cv2.imshow("wah", cropped)
+                    # cv2.waitKey(0)
+                    # cv2.destroyAllWindows()
                     edge_metadata.append({
+                        "image_id": image_i,
                         "piece_id": piece_idx,
                         "side": side_name,
                         "crop": cropped,
                     })
                 piece_idx += 1
-
         return edge_metadata
 
     def classify_piece(self,
@@ -199,6 +235,7 @@ class PuzzleImageModel(nn.Module):
                 points=all_pts,
                 centroid=centroid,
                 side=side,
+                epsilon_flat=30
             )
             sides[side] = cur_type
 
@@ -264,7 +301,19 @@ class PuzzleImageModel(nn.Module):
 
             # given all sides find the greatest degree
             # use radial for global relativity
-            best_side, best_score = max(
+            scores = {
+                name: float(np.dot(radial, np.asarray(side, dtype=np.float64)))
+                for name, side in sides.items()
+            }
+
+            # if we have a dominant side (beats 30% of second place)
+            best_side = max(scores, key=scores.get)
+            best_score = scores[best_side]
+            second_best = sorted(scores.values(), reverse=True)[1]
+
+            if best_score > 0.5 and best_score > second_best * 1.3:
+                all_pts[best_side].append((cur_pt, radial))
+            """best_side, best_score = max(
                 ((
                   name,
                   float(np.dot(radial,
@@ -273,8 +322,8 @@ class PuzzleImageModel(nn.Module):
                  ),
                 key=lambda t: t[1]
             )
-            if best_score > 0.707:
-                all_pts[best_side].append((cur_pt, radial))
+            all_pts[best_side].append((cur_pt, radial))"""
+        
         return all_pts
 
     def classify_edge_type(
@@ -282,7 +331,7 @@ class PuzzleImageModel(nn.Module):
         points: np.ndarray,
         centroid: np.ndarray,
         side: str,
-        epsilon_flat: int = 30,
+        epsilon_flat: int = 50,
         epsilon_curve: int = 100
          ):
         """Classifies edge from a baseline deviation.
@@ -296,22 +345,22 @@ class PuzzleImageModel(nn.Module):
         Returns:
             "knob", "hole", or "flat"
         """
+        pts = np.asarray(points)
         # if side is vertical, check x, else y
-        vertical = side not in ["top", "bottom"]
-        pts = np.array(points)
-        coord = 1 - int(vertical)
+        coord_idx = int(
+            side in ["top", "bottom"]
+        )
 
-        relevant_coords = pts[:, coord]
-        min_val = np.min(relevant_coords)
-        max_val = np.max(relevant_coords)
-        side_range = max_val - min_val
-
+        # percentiles
+        relevant_coords = pts[:, coord_idx]
+        p10 = np.percentile(relevant_coords, 10)
+        p90 = np.percentile(relevant_coords, 90)
+        side_range = p90 - p10
         if side_range <= epsilon_flat:
             return "flat"
 
-        # not flat, so determine knob or hole
         mid_val = relevant_coords[len(relevant_coords) // 2]
-        distance = np.abs(centroid[coord] - mid_val)
+        distance = np.abs(centroid[coord_idx] - mid_val)
         return "knob" if distance > epsilon_curve else "hole"
 
     # replacing this with classify_edge_type

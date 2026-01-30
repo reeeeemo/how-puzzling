@@ -243,31 +243,33 @@ def visualize_reward(model_path: str, images: list):
         boxes = result.boxes.xyxy
         n_pieces = len(boxes)
 
-        # precompute binary masks
+        # precompute binary masks / polygon sides
+        poly_sides = {}
         piece_masks = {}
         for pid in range(n_pieces):
             if pid >= len(results[idx].masks.xy):
                 piece_masks[pid] = None
+                poly_sides[pid] = None
                 continue
             poly = results[idx].masks.xy[pid]
-            piece_masks[pid] = create_binary_mask(poly,
-                                                  boxes[pid],
-                                                  images[idx].shape[:2])
-        # precompute polygon sides
-        polys = {}
-        for pid in range(n_pieces):
-            if pid >= len(results[idx].masks.xy):
-                polys[pid] = None
-                continue
-            polys[pid] = get_polygon_sides(
-                poly=results[idx].masks.xy[pid],
+            piece_masks[pid] = create_binary_mask(
+                poly,
+                boxes[pid],
+                images[idx].shape[:2]
+            )
+            poly_sides[pid] = get_polygon_sides(
+                poly=poly,
                 bbox=boxes[pid],
                 model=model
             )
 
         for piece_idx in range(n_pieces):
-            piece_edges = [i for i, meta in enumerate(edges)
-                           if meta["piece_id"] == piece_idx]
+            piece_edges = [
+                i for i, meta in enumerate(edges)
+                if meta["piece_id"] == piece_idx
+                and meta["image_id"] == idx
+            ]
+
             if not piece_edges:
                 continue
 
@@ -282,7 +284,7 @@ def visualize_reward(model_path: str, images: list):
                         0.7,
                         (255, 255, 255), 2)
 
-            cur_piece = polys.get(piece_idx)
+            cur_piece = poly_sides.get(piece_idx)
             centroid = model.get_centroid(
                 piece_masks[piece_idx],
                 binary_mask=True
@@ -302,7 +304,8 @@ def visualize_reward(model_path: str, images: list):
                     edge_side=edge_side,
                     edge_metadata=edges,
                     cur_piece_idx=piece_idx,
-                    poly_sides=polys,
+                    cur_image_idx=idx,
+                    poly_sides=poly_sides,
                     piece_masks=piece_masks,
                     cur_piece_type=piece_type,
                     cur_piece_sides=piece_sides,
@@ -310,9 +313,12 @@ def visualize_reward(model_path: str, images: list):
                     similarity_column=sim_col
                 )
 
+                if not compatible_sims:
+                    continue
+
                 top_idxs = get_top_n_compatible_sims(
                     compatible_sims=compatible_sims,
-                    polys=polys,
+                    polys=poly_sides,
                     piece_masks=piece_masks,
                     cur_piece=cur_piece,
                     cur_piece_mask=piece_masks.get(piece_idx),

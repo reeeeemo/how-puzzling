@@ -89,6 +89,7 @@ def visualize_edge_crop(crop,
 def get_compatible_similarities(edge_side: str,
                                 edge_metadata: dict,
                                 cur_piece_idx: int,
+                                cur_image_idx: int,
                                 poly_sides: dict,
                                 piece_masks: dict,
                                 cur_piece_type: str,
@@ -129,6 +130,9 @@ def get_compatible_similarities(edge_side: str,
             match_side = meta["side"]
             match_mask = piece_masks.get(match_pid)
             centroid = model.get_centroid(match_mask, binary_mask=True)
+
+            if meta["image_id"] != cur_image_idx:
+                continue
 
             match_type, match_sides = model.classify_piece(
                 poly_sides.get(match_pid),
@@ -193,6 +197,9 @@ def plot_n_similar_edges(sim_mat,
         edge_side: current edge side
         text_counts: dict to align y axis text
     """
+
+    if not sim_mat:
+        return
 
     # top 5 matches
     for (rank,
@@ -259,7 +266,8 @@ def visualize_similarities(results: list,
 
         for piece_idx in range(len(boxes)):
             piece_edges = [i for i, meta in enumerate(edge_metadata)
-                           if meta["piece_id"] == piece_idx]
+                           if meta["piece_id"] == piece_idx
+                           and meta["image_id"] == idx]
             if not piece_edges:
                 continue
 
@@ -300,6 +308,7 @@ def visualize_similarities(results: list,
                     model=model,
                     edge_metadata=edge_metadata,
                     cur_piece_idx=piece_idx,
+                    cur_image_idx=idx,
                     similarity_column=sim_col
                 )
 
