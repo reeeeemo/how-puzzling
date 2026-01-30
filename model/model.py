@@ -121,42 +121,6 @@ class PuzzleImageModel(nn.Module):
                             2, color, 2
                         )
 
-                    # computes tangent instead of edge crop
-                    # not removing for now, for comparative
-                    # purposes, but we'll see
-                    """
-                    inner_points = []
-
-                    for i in range(len(pts_side)):
-                        prev_i = (i-1) % len(pts_side)
-                        next_i = (i+1) % len(pts_side)
-
-                        tangent = pts_side[next_i] - pts_side[prev_i]
-                        tmag = np.linalg.norm(tangent)
-
-                        if tmag < 1e-6:
-                            perp = -radials[i]  # rough inward point calc
-                        else:
-                            tangent /= tmag
-                            # 90 degree rotation then flip signs if outward
-                            perp = np.array([-tangent[1], tangent[0]])
-                            if np.dot(perp, (centroid-pts_side[i])) < 0:
-                                perp = -perp
-
-                        inner_points.append(pts_side[i]+perp*(edge_width//2))
-
-                    strip_pts = np.array(pts_side + inner_points[::-1],
-                                         dtype=np.int32)
-
-                    # get bbox + clamp to image boundaries
-                    x_min, y_min = np.min(strip_pts, axis=0).astype(int)
-                    x_max, y_max = np.max(strip_pts, axis=0).astype(int)
-
-                    x_min = max(0, x_min)
-                    y_min = max(0, y_min)
-                    x_max = min(w, x_max)
-                    y_max = min(h, y_max)
-                    """
                     pts_side_i = np.array(pts_side, dtype=np.int32)
                     x_min = max(0, pts_side_i[:, 0].min() - edge_width)
                     x_max = min(w, pts_side_i[:, 0].max() + edge_width)
@@ -186,26 +150,6 @@ class PuzzleImageModel(nn.Module):
                         mask=mask_region
                     )
 
-                    # fix artifacts (dead code, will remove once fix)
-                    """mask = np.zeros((h, w), dtype=np.uint8)
-                    cv2.fillPoly(mask, [strip_pts], 255)
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-                    mask = cv2.bitwise_and(mask, mask_piece_closed)
-                    mask = cv2.morphologyEx(mask, cv2.MORPH_CLOSE, kernel)
-
-                    # dilate and erode for any extra artifacts
-                    mask = cv2.dilate(mask, kernel, iterations=2)
-                    mask = cv2.erode(mask, kernel, iterations=1)
-
-                    # extract crop
-                    result_img = cv2.bitwise_and(img, img, mask=mask)
-                    cropped = result_img[y_min:y_max, x_min:x_max]
-                    mask_crop = mask[y_min:y_max, x_min:x_max]  # cleaner edges
-                    cropped = cv2.bitwise_and(cropped, cropped, mask=mask_crop)
-                    """
-                    # cv2.imshow("wah", cropped)
-                    # cv2.waitKey(0)
-                    # cv2.destroyAllWindows()
                     edge_metadata.append({
                         "image_id": image_i,
                         "piece_id": piece_idx,
@@ -313,17 +257,7 @@ class PuzzleImageModel(nn.Module):
 
             if best_score > 0.5 and best_score > second_best * 1.3:
                 all_pts[best_side].append((cur_pt, radial))
-            """best_side, best_score = max(
-                ((
-                  name,
-                  float(np.dot(radial,
-                        np.asarray(side, dtype=np.float64)))
-                  ) for name, side in sides.items()
-                 ),
-                key=lambda t: t[1]
-            )
-            all_pts[best_side].append((cur_pt, radial))"""
-        
+
         return all_pts
 
     def classify_edge_type(

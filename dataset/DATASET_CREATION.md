@@ -82,7 +82,7 @@ I found that grayscale **dramatically improves** the quality of segmentations in
 
 Why does this happen? The edge detection filter, a laplacian filter, computes the second spatial derivative of an image. This results in a low variance of active pixels [[2]]. This hurts the quality since SAM models appear to be trained on dense, natural distributions. SAM's original paper specifically states "SAM was not trained to predict edge maps" [[3]] as well.
 
-This creates uncertainty amongst the structural information that the model already understands. In essence, I am asking the model to segment embeddings that it has never seen before in training. My findings shown above can help to add to my hypothesis, where the more detail that a puzzle piece contains, the worse it does at segmenting.
+This creates uncertainty amongst the structural information that the model already understands. In essence, I am asking the model to segment embeddings that it has never seen before in training. 
 
 ----
 
@@ -107,6 +107,8 @@ Contrast Limited Adaptive Histogram Equalization, better known as CLAHE, improve
 Overall, this seems to result in the boost of performance from CLAHE + Grayscale to maintain and enhance texture + shape within every image. The most interesting observation is that SAM 3 experiment with a text prompt performed as well as the SAM 2 experiement with bounding boxes. This means instead of the limitation of manually annotating every puzzle piece with bounding boxes, I can focus on creating a larger and more diverse dataset by inputting every image into SAM 3 with the prompt `"puzzle"`.
 
 With all of this information, I have learned a few lessons from this experiment:
+
+> Very subjective since this is a very specific use case.
 
 - SAM 2 outperforms SAM 3 given a set of bounding boxes.
 - SAM 2 with bounding boxes and SAM 3 with text input perform at a similar accuracy.
