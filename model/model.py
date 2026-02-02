@@ -61,23 +61,18 @@ class PuzzleImageModel(nn.Module):
 
         Args:
             results: YOLO segmentation results
+            edge_width: amount of space to crop for each edge
         Returns:
             list of dicts of piece idx, side type, and crop
         """
         edge_metadata = []
 
-        sides = {
-            "bottom": (0, 1),
-            "top": (0, -1),
-            "left": (-1, 0),
-            "right": (1, 0)
-        }
         for image_i, result in enumerate(results):
             img = result.orig_img
             h, w = img.shape[:2]
 
             piece_idx = 0
-            for poly in getattr(result.masks, "xy", []):
+            for i, poly in enumerate(getattr(result.masks, "xy", [])):
                 pts = np.asarray(poly, dtype=np.float32)
                 if pts.size == 0:
                     continue
@@ -90,16 +85,18 @@ class PuzzleImageModel(nn.Module):
                 mask_piece = np.zeros((h, w), dtype=np.uint8)
                 cv2.fillPoly(mask_piece, [pts_i], 255)
 
-                all_pts = self.get_side_approx(pts, sides)
+                all_pts = self.get_side_approx(
+                    points=pts_i,
+                    bbox=result.boxes.xyxy[i]
+                )
                 centroid = self.get_centroid(pts)
 
                 # crop
                 for side_name, pts_tuple in all_pts.items():
-                    if not pts_tuple or len(pts_tuple) < 2:
+                    if pts_tuple is None or len(pts_tuple) < 2:
                         continue
 
-                    pts_side = [pt for pt, _ in pts_tuple]
-                    # radials = [r for _, r in pts_tuple]
+                    pts_side = np.array(pts_tuple)
                     cur_type = self.classify_edge_type(
                         points=pts_side,
                         centroid=centroid,
@@ -109,23 +106,23 @@ class PuzzleImageModel(nn.Module):
 
                     if cur_type == "flat":
                         continue
-                    elif cur_type == "knob":
-                        color = (255, 0, 0)
-                    else:
-                        color = (0, 255, 0)
+                    # visualization code, keep for testing remove for prod
+                    # elif cur_type == "knob":
+                    #    color = (255, 0, 0)
+                    # else:
+                    #    color = (0, 255, 0)
 
-                    for pt in pts_side:
-                        cv2.circle(
-                            img,
-                            (int(pt[0]), int(pt[1])),
-                            2, color, 2
-                        )
+                    # for pt in pts_side:
+                    #    cv2.circle(
+                    #        img,
+                    #        (int(pt[0]), int(pt[1])),
+                    #        2, color, 2
+                    #    )
 
-                    pts_side_i = np.array(pts_side, dtype=np.int32)
-                    x_min = max(0, pts_side_i[:, 0].min() - edge_width)
-                    x_max = min(w, pts_side_i[:, 0].max() + edge_width)
-                    y_min = max(0, pts_side_i[:, 1].min() - edge_width)
-                    y_max = min(h, pts_side_i[:, 1].max() + edge_width)
+                    x_min = max(0, pts_side[:, 0].min() - edge_width)
+                    x_max = min(w, pts_side[:, 0].max() + edge_width)
+                    y_min = max(0, pts_side[:, 1].min() - edge_width)
+                    y_max = min(h, pts_side[:, 1].max() + edge_width)
                     if x_max <= x_min or y_max <= y_min:
                         continue
 
@@ -155,33 +152,26 @@ class PuzzleImageModel(nn.Module):
                         "piece_id": piece_idx,
                         "side": side_name,
                         "crop": cropped,
+                        "side_type": cur_type,
+                        "pts": pts_i,
                     })
                 piece_idx += 1
         return edge_metadata
 
     def classify_piece(self,
-                       edge_metadata: dict,
-                       centroid: np.ndarray) -> tuple[str, dict]:
+                       edge_metadata: dict) -> tuple[str, dict]:
         """Classifies a puzzle piece based on its flat sides.
 
         Args:
             edge_metadata: dict of side, list of pts
-            centroid: tuple of (x,y) pertaining to polygon center
         Returns:
             Tuple of:
              - Piece type (internal, corner, side_{side_type})
              - All side types (flat, knob, hole)
         """
         sides = {}
-        for side, pts in edge_metadata.items():
-            all_pts = [pt for pt, _ in pts]
-            cur_type = self.classify_edge_type(
-                points=all_pts,
-                centroid=centroid,
-                side=side,
-                epsilon_flat=30
-            )
-            sides[side] = cur_type
+        for meta in edge_metadata:
+            sides[meta["side"]] = meta["side_type"]
 
         flat_sides = [s for s, typ in sides.items()
                       if typ == "flat"]
@@ -222,42 +212,109 @@ class PuzzleImageModel(nn.Module):
         )
         return centroid
 
-    def get_side_approx(self, points, sides: dict):
+    def get_side_approx(self, points: np.ndarray, bbox: list):
         """Get all side approximations of a polygon.
 
         Args:
             points: polygon points to approximate
-            sides: dict of sides + unit vectors that can be approximated
+            bbox: bounding box of whole mask
         Returns:
             dict of a points list for every side
         """
-        centroid = self.get_centroid(points)
+        sides = ["left", "right", "top", "bottom"]
+        all_pts = {k: [] for k in sides}
+        pts_i = np.rint(points).astype(np.int32)
 
-        new_pts = np.vstack([points[-1:], points, points[:1]])  # cyclic
-        all_pts = {k: [] for k in sides.keys()}
+        # find 4 edges of polygon
+        x1, y1, x2, y2 = map(int, bbox)
+        side_edges = {
+            "top_left": (x1, y1),
+            "bottom_left": (x1, y2),
+            "top_right": (x2, y1),
+            "bottom_right": (x2, y2)
+        }
 
-        for cur_pt in new_pts:
-            radial = cur_pt - centroid  # radial vec
-            rmag = np.linalg.norm(radial)
-            if rmag < 1e-12:
+        corners = {}
+        picked_pts = set()
+        for side, coord in side_edges.items():
+            # get top 10 distances from bbox
+            distances = []
+            for pt in pts_i:
+                new_dist = np.sqrt(
+                    (coord[0] - pt[0]) ** 2 +
+                    (coord[1] - pt[1]) ** 2
+                )
+                distances.append((new_dist, pt))
+            distances.sort(key=lambda x: x[0])
+            potential_edges = [pt for _, pt in distances[:10]]
+
+            # get closest x to the edge
+            coord_idx = int("top" not in side and "bottom" not in side)
+            closest_pt = None
+            closest_dist = float("inf")
+            for edge_pt in potential_edges:
+                if tuple(edge_pt) in picked_pts:
+                    continue
+
+                if "left" in side or "top" in side:
+                    new_dist = edge_pt[coord_idx] - coord[coord_idx]
+                else:
+                    new_dist = coord[coord_idx] - edge_pt[coord_idx]
+
+                if new_dist < closest_dist:
+                    closest_pt = edge_pt
+                    closest_dist = new_dist
+            corners[side] = tuple(closest_pt)
+            picked_pts.add(tuple(closest_pt))
+
+        corner_indices = {}
+        for corner_name, corner_pt in corners.items():
+            for i, pt in enumerate(pts_i):
+                if tuple(pt) == corner_pt:
+                    corner_indices[corner_name] = i
+                    break
+
+        tl_idx = corner_indices["top_left"]
+        tr_idx = corner_indices["top_right"]
+        bl_idx = corner_indices["bottom_left"]
+        br_idx = corner_indices["bottom_right"]
+
+        indices = sorted([
+            (tl_idx, "top_left"),
+            (tr_idx, "top_right"),
+            (br_idx, "bottom_right"),
+            (bl_idx, "bottom_left")
+        ])
+
+        for i in range(len(indices)):
+            start_idx, start_corner = indices[i]
+            end_idx, end_corner = indices[(i+1) % len(indices)]
+
+            corner_pair = {start_corner, end_corner}
+            if corner_pair == {"top_left", "top_right"}:
+                side_key = "top"
+            elif corner_pair == {"top_right", "bottom_right"}:
+                side_key = "right"
+            elif corner_pair == {"bottom_right", "bottom_left"}:
+                side_key = "bottom"
+            elif corner_pair == {"bottom_left", "top_left"}:
+                side_key = "left"
+            else:
                 continue
-            radial /= rmag
 
-            # given all sides find the greatest degree
-            # use radial for global relativity
-            scores = {
-                name: float(np.dot(radial, np.asarray(side, dtype=np.float64)))
-                for name, side in sides.items()
-            }
+            if end_idx > start_idx:  # pts between start and end
+                all_pts[side_key] = points[start_idx:end_idx+1]  # pts_i
+            else:  # wrap points
+                all_pts[side_key] = np.concatenate([
+                    points[start_idx:],
+                    points[:end_idx+1]
+                ])
 
-            # if we have a dominant side (beats 30% of second place)
-            best_side = max(scores, key=scores.get)
-            best_score = scores[best_side]
-            second_best = sorted(scores.values(), reverse=True)[1]
-
-            if best_score > 0.5 and best_score > second_best * 1.3:
-                all_pts[best_side].append((cur_pt, radial))
-
+        for side_key in all_pts:
+            if len(all_pts[side_key]) == 0:
+                all_pts[side_key] = np.zeros((0, 2), dtype=np.int32)
+            else:
+                all_pts[side_key] = np.atleast_2d(all_pts[side_key])
         return all_pts
 
     def classify_edge_type(
@@ -266,7 +323,6 @@ class PuzzleImageModel(nn.Module):
         centroid: np.ndarray,
         side: str,
         epsilon_flat: int = 50,
-        epsilon_curve: int = 100
          ):
         """Classifies edge from a baseline deviation.
 
@@ -275,15 +331,14 @@ class PuzzleImageModel(nn.Module):
             centroid: tuple of (x, y) centroid along the polygon
             side: current side of the edge being classified
             epsilon_flat: Threshold for deviation of a flat line
-            k: Amt of points to consider for curve
         Returns:
             "knob", "hole", or "flat"
         """
-        pts = np.asarray(points)
-        # if side is vertical, check x, else y
+        pts = points
         coord_idx = int(
             side in ["top", "bottom"]
         )
+        perp_coord_idx = coord_idx - 1
 
         # percentiles
         relevant_coords = pts[:, coord_idx]
@@ -293,27 +348,24 @@ class PuzzleImageModel(nn.Module):
         if side_range <= epsilon_flat:
             return "flat"
 
-        mid_val = relevant_coords[len(relevant_coords) // 2]
-        distance = np.abs(centroid[coord_idx] - mid_val)
-        return "knob" if distance > epsilon_curve else "hole"
+        perp_coords = pts[:, perp_coord_idx]
+        center = pts[len(pts)//2]
 
-    # replacing this with classify_edge_type
-    def is_flat_side(self, points, epsilon: int = 1, vertical: bool = False):
-        """Return True if side is flat, else false
+        adaptive_pct = max(1, min(10, 100 / len(pts)))
+        p10_val = np.percentile(perp_coords, adaptive_pct)
+        p10_pt = pts[np.argmin(np.abs(perp_coords-p10_val))]
 
-        Args:
-            points: numpy array of (x,y) tuples
-            epsilon: Threshold for normalized max deviation
-            vertical: whether to compare y or x deviation
-        """
-        coord = 1 - int(vertical)
-        np_pts = np.array(points)
+        if side in ["top", "left"]:
+            distance_from_base = centroid[coord_idx] - p10_pt[coord_idx]
+            distance_from_mid = centroid[coord_idx] - center[coord_idx]
+        else:
+            distance_from_base = p10_pt[coord_idx] - centroid[coord_idx]
+            distance_from_mid = center[coord_idx] - centroid[coord_idx]
 
-        min_val = np.min(np_pts[:, coord])
-        max_val = np.max(np_pts[:, coord])
-        side_range = max_val - min_val
-
-        return side_range <= epsilon
+        if distance_from_base > distance_from_mid:
+            return "hole"
+        else:
+            return "knob"
 
     def densify_polygons(self, pts, step: int = 1.0):
         """Walk over each edge of polygon and add points.
@@ -382,33 +434,3 @@ class PuzzleImageModel(nn.Module):
         sim_mat = torch.clamp(sim_mat, 0.0, 1.0)
         sim_mat.fill_diagonal_(1.0)
         return sim_mat
-
-    def crop_images(self, results, imgs):
-        """Crop the images per segmentation
-
-        Args:
-            results: segmentation masks from model
-            imgs: list of numpy arrays
-        Returns:
-            tuple: tensor of batched cropped,
-            xyxy coords of cropped box
-        """
-        boxes_per_image = {i: [] for i in range(len(imgs))}
-
-        for idx, (result, img) in enumerate(zip(results, imgs)):
-            boxes = result.boxes.xyxy
-            h, w = img.shape[:2]
-
-            for box in boxes:
-                x1, y1, x2, y2 = map(int, box)
-                x1 = max(0, min(w-1, x1))
-                x2 = max(0, min(w, x2))
-                y1 = max(0, min(h-1, y1))
-                y2 = max(0, min(h, y2))
-
-                if x2 <= x1 or y2 <= y1:
-                    continue  # boxes out of bounds
-
-                boxes_per_image[idx].append((x1, y1, x2, y2))
-
-        return boxes_per_image

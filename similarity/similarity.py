@@ -6,7 +6,6 @@ from model.model import PuzzleImageModel
 from dataset.dataset import PuzzleDataset
 import argparse
 from collections import defaultdict
-from utils.polygons import create_binary_mask, get_polygon_sides
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -90,11 +89,9 @@ def get_compatible_similarities(edge_side: str,
                                 edge_metadata: dict,
                                 cur_piece_idx: int,
                                 cur_image_idx: int,
-                                poly_sides: dict,
-                                piece_masks: dict,
+                                piece_classifications: dict,
                                 cur_piece_type: str,
                                 cur_piece_sides: dict,
-                                model: PuzzleImageModel,
                                 similarity_column):
     """Compute opposing edge similarities if valid, rank then return.
 
@@ -105,11 +102,10 @@ def get_compatible_similarities(edge_side: str,
         edge_side: current edge side to compare against
         edge_metadata: information about every edge
         cur_piece_idx: current puzzle piece ID
-        poly_sides: all dicts of sides, list of pts of puzzle pieces
-        piece_masks: dict of binary masks for every puzzle piece
+        cur_image_idx: current image ID
+        piece_classifications: dict of tuples of piece_type, piece sides
         cur_piece_type: current type of the puzzle piece (side, corner, etc.)
         cur_piece_sides: dict of types for each side of a piece (knob, hole)
-        model: Model to run inference on
         similarity_column: cosine sim mat for all edges
     Returns:
         list of compatible similarities, ranked.
@@ -128,16 +124,11 @@ def get_compatible_similarities(edge_side: str,
         if meta["side"] == opposite and meta["piece_id"] != cur_piece_idx:
             match_pid = meta["piece_id"]
             match_side = meta["side"]
-            match_mask = piece_masks.get(match_pid)
-            centroid = model.get_centroid(match_mask, binary_mask=True)
 
             if meta["image_id"] != cur_image_idx:
                 continue
 
-            match_type, match_sides = model.classify_piece(
-                poly_sides.get(match_pid),
-                centroid
-            )
+            match_type, match_sides = piece_classifications[match_pid]
 
             # side-to-side can only be same-border
             if (
@@ -248,26 +239,28 @@ def visualize_similarities(results: list,
     for idx, result in enumerate(results):
         boxes = result.boxes.xyxy
 
-        # precompute binary mask + polygon sides
-        poly_sides = {}
-        piece_masks = {}
+        # precompute every piece type + its side types
+        piece_classifications = {}
         for pid in range(len(boxes)):
             if pid >= len(results[idx].masks.xy):
-                piece_masks[pid] = None
-                poly_sides[pid] = None
                 continue
-            poly = result.masks.xy[pid]
-            piece_masks[pid] = create_binary_mask(
-                poly=poly, box=boxes[pid], img_shape=images[idx].shape[:2]
-            )
-            poly_sides[pid] = get_polygon_sides(
-                poly=poly, bbox=boxes[pid], model=model
-            )
+            piece_edges = [
+                meta for meta in edge_metadata
+                if meta["piece_id"] == pid and meta["image_id"] == idx
+            ]
+            if piece_edges:
+                piece_type, piece_sides = model.classify_piece(
+                    edge_metadata=piece_edges
+                )
+                piece_classifications[pid] = (piece_type, piece_sides)
 
         for piece_idx in range(len(boxes)):
-            piece_edges = [i for i, meta in enumerate(edge_metadata)
-                           if meta["piece_id"] == piece_idx
-                           and meta["image_id"] == idx]
+            piece_edges = [
+                i for i, meta in enumerate(edge_metadata)
+                if meta["piece_id"] == piece_idx
+                and meta["image_id"] == idx
+            ]
+
             if not piece_edges:
                 continue
 
@@ -282,15 +275,7 @@ def visualize_similarities(results: list,
                         0.7,
                         (255, 255, 255), 2)
 
-            # get current piece info once
-            cur_piece_centroid = model.get_centroid(
-                piece_masks[piece_idx],
-                binary_mask=True
-            )
-            cur_piece_type, cur_piece_sides = model.classify_piece(
-                edge_metadata=poly_sides.get(piece_idx),
-                centroid=cur_piece_centroid
-            )
+            cur_piece_type, cur_piece_sides = piece_classifications[piece_idx]
 
             text_counts = defaultdict(int)
             edge_crops_display = []
@@ -301,14 +286,12 @@ def visualize_similarities(results: list,
 
                 compatible_sims = get_compatible_similarities(
                     edge_side=edge_side,
-                    poly_sides=poly_sides,
-                    piece_masks=piece_masks,
-                    cur_piece_type=cur_piece_type,
-                    cur_piece_sides=cur_piece_sides,
-                    model=model,
                     edge_metadata=edge_metadata,
                     cur_piece_idx=piece_idx,
                     cur_image_idx=idx,
+                    piece_classifications=piece_classifications,
+                    cur_piece_type=cur_piece_type,
+                    cur_piece_sides=cur_piece_sides,
                     similarity_column=sim_col
                 )
 

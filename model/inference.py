@@ -17,7 +17,7 @@ import argparse
 # Example:
 # python -m model.inference
 #   --dataset dataset/data/jigsaw_puzzle
-#   --model puzzle-segment-model/best.py
+#   --model puzzle-segment-model/best.pt
 #   --split test
 
 

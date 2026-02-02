@@ -8,6 +8,7 @@ import cv2
 from collections import defaultdict
 from similarity.similarity import get_compatible_similarities
 import heapq
+from utils.polygons import get_polygon_sides, create_binary_mask
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
@@ -89,14 +90,12 @@ def reward_function(mask_a: np.ndarray,
         return -5.0
 
     # current side polygon to check
-    pts_a_side = pts_a.get(side_a, [])
-    if len(pts_a_side) == 0:
+    side_a_pts = pts_a.get(side_a, np.array([]))
+    if len(side_a_pts) == 0:
         return -5.0
-    side_a_pts = np.array([pt for pt, _ in pts_a_side])
-    pts_b_side = pts_b.get(side_b, [])
-    if len(pts_b_side) == 0:
+    side_b_pts = pts_b.get(side_b, np.array([]))
+    if len(side_b_pts) == 0:
         return -5.0
-    side_b_pts = np.array([pt for pt, _ in pts_b_side])
 
     cx_a, cy_a = int(centroid_a[0]), int(centroid_a[1])
     cx_b, cy_b = int(centroid_b[0]), int(centroid_b[1])
@@ -198,7 +197,6 @@ def reward_function(mask_a: np.ndarray,
     )
 
     # visualize the masks
-
     combined = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
     combined[padded_a > 0] = (0, 0, 128)
     combined[padded_b > 0] = (128, 0, 0)
@@ -237,15 +235,16 @@ def visualize_reward(model_path: str, images: list):
         images: list of images to inference
     """
     model = PuzzleImageModel(model_name=model_path, device=DEVICE)
-    results, similarities, edges = model(images)
+    results, similarities, edge_metadata = model(images)
 
     for idx, result in enumerate(results):
         boxes = result.boxes.xyxy
         n_pieces = len(boxes)
 
-        # precompute binary masks / polygon sides
+        # precompute binary masks, polygon sides, and piece types
         poly_sides = {}
         piece_masks = {}
+        piece_classifications = {}
         for pid in range(n_pieces):
             if pid >= len(results[idx].masks.xy):
                 piece_masks[pid] = None
@@ -262,10 +261,19 @@ def visualize_reward(model_path: str, images: list):
                 bbox=boxes[pid],
                 model=model
             )
+            piece_edges = [
+                meta for meta in edge_metadata
+                if meta["piece_id"] == pid and meta["image_id"] == idx
+            ]
+            if piece_edges:
+                piece_type, piece_sides = model.classify_piece(
+                    edge_metadata=piece_edges
+                )
+                piece_classifications[pid] = (piece_type, piece_sides)
 
         for piece_idx in range(n_pieces):
             piece_edges = [
-                i for i, meta in enumerate(edges)
+                i for i, meta in enumerate(edge_metadata)
                 if meta["piece_id"] == piece_idx
                 and meta["image_id"] == idx
             ]
@@ -285,31 +293,22 @@ def visualize_reward(model_path: str, images: list):
                         (255, 255, 255), 2)
 
             cur_piece = poly_sides.get(piece_idx)
-            centroid = model.get_centroid(
-                piece_masks[piece_idx],
-                binary_mask=True
-            )
-            piece_type, piece_sides = model.classify_piece(
-                cur_piece,
-                centroid
-            )
+            cur_piece_type, cur_piece_sides = piece_classifications[piece_idx]
 
             text_counts = defaultdict(int)
             all_matches = []
             for edge_idx in piece_edges:
-                edge_side = edges[edge_idx]["side"]
+                edge_side = edge_metadata[edge_idx]["side"]
                 sim_col = similarities[edge_idx, :]
 
                 compatible_sims = get_compatible_similarities(
                     edge_side=edge_side,
-                    edge_metadata=edges,
+                    edge_metadata=edge_metadata,
                     cur_piece_idx=piece_idx,
                     cur_image_idx=idx,
-                    poly_sides=poly_sides,
-                    piece_masks=piece_masks,
-                    cur_piece_type=piece_type,
-                    cur_piece_sides=piece_sides,
-                    model=model,
+                    piece_classifications=piece_classifications,
+                    cur_piece_type=cur_piece_type,
+                    cur_piece_sides=cur_piece_sides,
                     similarity_column=sim_col
                 )
 
@@ -408,39 +407,6 @@ def get_top_n_compatible_sims(
         elif reward_score > top_n_piece_idxs[0][0]:
             heapq.heapreplace(top_n_piece_idxs, (reward_score, compat_idx))
     return sorted(top_n_piece_idxs, reverse=True)
-
-
-def get_polygon_sides(poly, bbox, model: PuzzleImageModel) -> dict:
-    sides = {
-        "bottom": (0, 1),
-        "top": (0, -1),
-        "left": (-1, 0),
-        "right": (1, 0)
-    }
-
-    pts = np.asarray(poly, dtype=np.float32)
-    dense_pts = model.densify_polygons(pts, step=1)
-
-    x1, y1, _, _ = map(int, bbox)
-    pts_cropped = dense_pts - np.array([x1, y1])
-    return model.get_side_approx(
-        pts_cropped, sides
-    )
-
-
-def create_binary_mask(poly, box, img_shape: tuple):
-    pts = np.asarray(poly, dtype=np.float32)
-    if pts.size == 0:
-        return
-
-    pts_i = np.rint(pts).astype(np.int32)
-    b_mask = np.zeros(img_shape, np.uint8)
-    cv2.fillPoly(b_mask, [pts_i], 255)
-
-    x1, y1, x2, y2 = map(int, box)
-    b_crop = b_mask[y1:y2, x1:x2]
-
-    return b_crop
 
 
 def main():
