@@ -60,6 +60,7 @@ class Puzzler(gym.Env):
         self.piece_masks = {}  # piece_id: binary mask
         self.poly_sides = {}  # piece_id: dict of side: pts
         self.piece_images = {}  # piece_id: rgb mask
+        self.piece_classifications = {}
         for pid in range(self.num_pieces):
             poly = results[0].masks.xy[pid]
             box = results[0].boxes.xyxy[pid]
@@ -79,15 +80,24 @@ class Puzzler(gym.Env):
                 img_shape=self.target_image.shape[:2],
                 image=self.target_image
             )
+            piece_edges = [
+                meta for meta in self.edges_metadata
+                if meta["piece_id"] == pid
+            ]
+            if piece_edges:
+                piece_type, piece_sides = self.model.classify_piece(
+                    edge_metadata=piece_edges
+                )
+                self.piece_classifications[pid] = (piece_type, piece_sides)
 
-        self.current_assembled = {}  # piece_id -> (row, col)
-        grid_size = int(np.ceil(np.sqrt(self.num_pieces)))
-        self.grid = np.full((grid_size, grid_size), -1, dtype=int)
+        grid_w, grid_h = self._get_grid_size()
+        self.grid = np.full((grid_h, grid_w), -1, dtype=int)
         self.cur_steps = 0
+        self.current_assembled = {}  # piece_id -> (row, col)
 
         # ex action: (piece_id, grid_x, grid_y)
         self.action_space = spaces.MultiDiscrete(
-            [self.num_pieces, grid_size, grid_size]
+            [self.num_pieces, grid_w, grid_h]
         )
 
         # rl model sees cur assembled pieces, remaining ones to choose,
@@ -102,7 +112,7 @@ class Puzzler(gym.Env):
             "remaining_pieces": spaces.Discrete(self.num_pieces + 1),
             "placed_grid": spaces.Box(
                 low=-1, high=self.num_pieces-1,
-                shape=(grid_size, grid_size),
+                shape=(grid_w, grid_h),
                 dtype=np.int64
             ),
             "selected_edge_candidates": spaces.Box(
@@ -112,6 +122,14 @@ class Puzzler(gym.Env):
             ),
             "valid_pieces": spaces.MultiBinary(self.num_pieces)
         })
+
+    def _get_grid_size(self):
+        """Get size of puzzle grid in width X height format."""
+        num_left = len([idx for idx, types in self.piece_classifications.items()
+                       if "left" in types[0]])
+        num_top = len([idx for idx, types in self.piece_classifications.items()
+                      if "top" in types[0]])
+        return num_top, num_left
 
     def _get_edge_similarity(
             self,
@@ -156,9 +174,9 @@ class Puzzler(gym.Env):
             match_x, match_y = cur_x + dir_vec[0], cur_y + dir_vec[1]
             # out of bounds check
             if (match_x < 0 or
-               match_x >= self.grid.shape[0] or
+               match_x >= self.grid.shape[1] or
                match_y < 0 or
-               match_y >= self.grid.shape[1]):
+               match_y >= self.grid.shape[0]):
                 continue
 
             match_pid = self.grid[match_y][match_x]
@@ -325,8 +343,8 @@ class Puzzler(gym.Env):
         super().reset(seed=seed)
 
         # init grid
-        grid_size = int(np.ceil(np.sqrt(self.num_pieces)))
-        self.grid = np.full((grid_size, grid_size), -1, dtype=int)
+        grid_w, grid_h = self._get_grid_size()
+        self.grid = np.full((grid_h, grid_w), -1, dtype=int)
         self.cur_steps = 0
         self.current_assembled = {}
         self.remaining_pieces = self.num_pieces

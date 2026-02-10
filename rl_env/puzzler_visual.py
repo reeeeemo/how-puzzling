@@ -53,14 +53,14 @@ def main():
     print(puzzler.observation_space)
     print(puzzler.action_space)
 
-    random_ = False
+    random_ = True
     corr_pieces = [13, 14, 8, 15, 3, 12, 7, 0, 5, 11, 2, 9, 4, 6, 1, 10]
 
     obs, info = puzzler.reset()
     valid_pieces = obs["valid_pieces"]
     available_pids = np.where(valid_pieces == 1)[0]
     x, y = 0, 0
-    grid_size = info["grid_size"][0]
+    grid_size_h, _ = info["grid_size"]
     i = 0
 
     if random_:
@@ -94,7 +94,7 @@ def main():
             cv2.destroyAllWindows()
 
             y += 1
-            if y >= grid_size:
+            if y >= grid_size_h:
                 y = 0
                 x += 1
             i += 1
@@ -126,7 +126,7 @@ def main():
             cv2.destroyAllWindows()
 
             y += 1
-            if y >= grid_size:
+            if y >= grid_size_h:
                 y = 0
                 x += 1
             i += 1
