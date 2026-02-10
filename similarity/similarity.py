@@ -92,7 +92,8 @@ def get_compatible_similarities(edge_side: str,
                                 piece_classifications: dict,
                                 cur_piece_type: str,
                                 cur_piece_sides: dict,
-                                similarity_column):
+                                similarity_column,
+                                strict_rules: bool = True):
     """Compute opposing edge similarities if valid, rank then return.
 
     Valid puzzle piece edges are of different types, and do not break
@@ -107,9 +108,12 @@ def get_compatible_similarities(edge_side: str,
         cur_piece_type: current type of the puzzle piece (side, corner, etc.)
         cur_piece_sides: dict of types for each side of a piece (knob, hole)
         similarity_column: cosine sim mat for all edges
+        strict_rules: whether to restrict similarities by puzzle rules
     Returns:
         list of compatible similarities, ranked.
     """
+    if cur_piece_sides[edge_side] == "flat":
+        return []
     opposites = {
         "top": "bottom",
         "bottom": "top",
@@ -125,40 +129,91 @@ def get_compatible_similarities(edge_side: str,
             match_pid = meta["piece_id"]
             match_side = meta["side"]
 
+            # same image idx and cannot be a flat side comparing
             if meta["image_id"] != cur_image_idx:
+                continue
+            if meta["side_type"] == "flat":
                 continue
 
             match_type, match_sides = piece_classifications[match_pid]
 
-            # side-to-side can only be same-border
-            if (
-                match_type.startswith("side_") and
-                cur_piece_type.startswith("side_") and
-                match_type != cur_piece_type
-            ):
-                continue
-
-            # if we have a side and internal piece
-            # has to be opposite of flat side
-            if (
-                cur_piece_type.startswith("side_")
-                and match_type == "internal"
-               ):
-                cur_flat_edge = cur_piece_type.split("_")[1]
-                if edge_side != opposites[cur_flat_edge]:
-                    continue
-            elif (
-                  cur_piece_type == "internal"
-                  and match_type.startswith("side_")
-               ):
-                match_flat_edge = match_type.split("_")[1]
-                if opposite != opposites[match_flat_edge]:
-                    continue
-
             # no knob -> knob or hole -> hole
-            if (match_sides.get(match_side) ==
-               cur_piece_sides.get(edge_side)):
+            if (
+                match_sides.get(match_side) ==
+                cur_piece_sides.get(edge_side)
+               ):
                 continue
+
+            if strict_rules:
+                # side-to-side can only be same-border
+                if (
+                    match_type.startswith("side_") and
+                    cur_piece_type.startswith("side_") and
+                    match_type != cur_piece_type
+                ):
+                    continue
+
+                # no corner -> internal, only boundary (side) pieces
+                if (
+                    (
+                        match_type.startswith("corner_") and
+                        cur_piece_type == "internal"
+                    ) or
+                    (
+                        cur_piece_type.startswith("corner_") and
+                        match_type == "internal"
+                    )
+                ):
+                    continue
+
+                # corner to corner only happens if 1 side opp and 1 side same
+                if (
+                    cur_piece_type.startswith("corner_") and
+                    match_type.startswith("corner_")
+                ):
+                    match_flat_edges = match_type.split("_")[1:]
+                    cur_flat_edges = cur_piece_type.split("_")[1:]
+
+                    intersections = set(match_flat_edges) & set(cur_flat_edges)
+                    opp_intersections = (
+                        set([opposites[side] for side in match_flat_edges]) &
+                        set(cur_flat_edges)
+                    )
+                    if len(intersections) <= 0 or len(opp_intersections) <= 0:
+                        continue
+
+                # corner - side can only happen if there is a same flat side
+                if (
+                    cur_piece_type.startswith("corner_") and
+                    match_type.startswith("side_")
+                ):
+                    match_flat_edge = match_type.split("_")[1]
+                    if match_flat_edge not in cur_piece_type.split("_")[1:]:
+                        continue
+                elif (
+                    cur_piece_type.startswith("side_") and
+                    match_type.startswith("corner_")
+                ):
+                    cur_flat_edge = cur_piece_type.split("_")[1]
+                    if cur_flat_edge not in match_type.split("_")[1:]:
+                        continue
+
+                # if we have a side and internal piece
+                # has to be opposite of flat side
+                if (
+                    cur_piece_type.startswith("side_")
+                    and match_type == "internal"
+                ):
+                    cur_flat_edge = cur_piece_type.split("_")[1]
+                    if edge_side != opposites[cur_flat_edge]:
+                        continue
+                elif (
+                    cur_piece_type == "internal"
+                    and match_type.startswith("side_")
+                ):
+                    match_flat_edge = match_type.split("_")[1]
+                    if opposite != opposites[match_flat_edge]:
+                        continue
             compatible_edges.append((i, meta))
 
     if not compatible_edges:

@@ -40,19 +40,26 @@ def pad_offset_to_size(img: np.ndarray, target_size: tuple, offset: tuple):
     h, w = img.shape[:2]
     y_offset, x_offset = offset
 
-    pad_top = max(0, y_offset)
-    pad_bottom = max(0, (target_h - h - pad_top))
-    pad_left = max(0, x_offset)
-    pad_right = max(0, (target_w - w - pad_left))
+    if len(img.shape) == 3:
+        result = np.zeros((target_h, target_w, img.shape[2]), dtype=img.dtype)
+    else:
+        result = np.zeros((target_h, target_w), dtype=img.dtype)
 
-    padded = cv2.copyMakeBorder(
-        img,
-        pad_top, pad_bottom, pad_left, pad_right,
-        cv2.BORDER_CONSTANT,
-        value=(0, 0, 0)
-    )
+    # valid region to place images
+    src_y1 = max(0, -y_offset)
+    src_x1 = max(0, -x_offset)
+    src_y2 = min(h, target_h - y_offset)
+    src_x2 = min(w, target_w - x_offset)
 
-    return padded
+    # dest coords
+    dst_y1 = max(0, y_offset)
+    dst_x1 = max(0, x_offset)
+    dst_y2 = dst_y1 + (src_y2 - src_y1)
+    dst_x2 = dst_x1 + (src_x2 - src_x1)
+
+    result[dst_y1:dst_y2, dst_x1:dst_x2] = img[src_y1:src_y2, src_x1:src_x2]
+
+    return result
 
 
 def reward_function(mask_a: np.ndarray,
@@ -62,7 +69,8 @@ def reward_function(mask_a: np.ndarray,
                     side_a: str,
                     side_b: str,
                     model: PuzzleImageModel,
-                    similarity_score: float):
+                    similarity_score: float,
+                    visualize: bool = False):
     """Given 2 boxes, return the reward for both opposing pieces.
 
     Args:
@@ -74,6 +82,7 @@ def reward_function(mask_a: np.ndarray,
         side_b: matching piece side
         model: model to use for inference
         similarity_score: sim score between 2 edges
+        visualize: whether to visualize mask overlap
     Returns:
         Reward: whitespace + overlap + top similar
     """
@@ -120,7 +129,6 @@ def reward_function(mask_a: np.ndarray,
         dist_a = abs(cx_a - side_a_pts[:, 0].mean())
         dist_b = abs(cx_b - side_b_pts[:, 0].mean())
         overlap_distance_x = int((dist_a + dist_b) * overlap_percentage_x)
-        # overlap_distance_x = max(30, min(120, overlap_distance_x))
 
         canvas_w = w_a + w_b + padding * 2
         canvas_h = max(h_a, h_b) + padding * 2
@@ -147,7 +155,6 @@ def reward_function(mask_a: np.ndarray,
         dist_a = abs(cy_a - side_a_pts[:, 1].mean())
         dist_b = abs(cy_b - side_b_pts[:, 1].mean())
         overlap_distance_y = int((dist_a + dist_b) * overlap_percentage_y)
-        # overlap_distance_y = max(30, min(120, overlap_distance_y))
         canvas_w = max(w_a, w_b) + padding * 2
         canvas_h = h_a + h_b + padding * 2
 
@@ -197,29 +204,34 @@ def reward_function(mask_a: np.ndarray,
     )
 
     # visualize the masks
-    combined = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
-    combined[padded_a > 0] = (0, 0, 128)
-    combined[padded_b > 0] = (128, 0, 0)
-    combined[(padded_a > 0) & (padded_b > 0)] = (255, 255, 255)
+    if visualize:
+        combined = np.zeros((canvas_h, canvas_w, 3), dtype=np.uint8)
+        combined[padded_a > 0] = (0, 0, 128)
+        combined[padded_b > 0] = (128, 0, 0)
+        combined[(padded_a > 0) & (padded_b > 0)] = (255, 255, 255)
+        cv2.rectangle(combined, (edge_min_x, edge_min_y),
+                      (edge_max_x, edge_max_y), (255, 255, 255), 2)
 
-    cv2.rectangle(combined, (edge_min_x, edge_min_y),
-                  (edge_max_x, edge_max_y), (255, 255, 255), 2)
+        for pt in side_a_pts:
+            cv2.circle(
+                combined,
+                (int(pt[0])+offset_a_x, int(pt[1])+offset_a_y),
+                2,
+                (0, 0, 255),
+                2
+            )
+        for pt in side_b_pts:
+            cv2.circle(
+                combined,
+                (int(pt[0])+offset_b_x, int(pt[1])+offset_b_y),
+                2,
+                (255, 0, 0),
+                2
+            )
 
-    for pt in side_a_pts:
-        cv2.circle(combined,
-                   (int(pt[0])+offset_a_x, int(pt[1])+offset_a_y),
-                   2,
-                   (0, 0, 255),
-                   2)
-    for pt in side_b_pts:
-        cv2.circle(combined,
-                   (int(pt[0])+offset_b_x, int(pt[1])+offset_b_y),
-                   2,
-                   (255, 0, 0),
-                   2)
-
-    # cv2.imshow(f"pieces aligned on {side_a} axis", combined)
-    # cv2.waitKey(0)
+        cv2.imshow(f"pieces aligned on {side_a} axis", combined)
+        cv2.waitKey(0)
+        cv2.destroyAllWindows()
 
     return (
         (similarity_score * 1000) -
@@ -300,6 +312,9 @@ def visualize_reward(model_path: str, images: list):
             for edge_idx in piece_edges:
                 edge_side = edge_metadata[edge_idx]["side"]
                 sim_col = similarities[edge_idx, :]
+
+                if edge_metadata[edge_idx]["side_type"] == "flat":
+                    continue
 
                 compatible_sims = get_compatible_similarities(
                     edge_side=edge_side,
@@ -399,7 +414,8 @@ def get_top_n_compatible_sims(
             side_a=cur_edge,
             side_b=match_side,
             model=model,
-            similarity_score=sim_score
+            similarity_score=sim_score,
+            visualize=True
         )
 
         if len(top_n_piece_idxs) < n:

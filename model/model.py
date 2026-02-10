@@ -104,21 +104,6 @@ class PuzzleImageModel(nn.Module):
                         epsilon_flat=30
                     )
 
-                    if cur_type == "flat":
-                        continue
-                    # visualization code, keep for testing remove for prod
-                    # elif cur_type == "knob":
-                    #    color = (255, 0, 0)
-                    # else:
-                    #    color = (0, 255, 0)
-
-                    # for pt in pts_side:
-                    #    cv2.circle(
-                    #        img,
-                    #        (int(pt[0]), int(pt[1])),
-                    #        2, color, 2
-                    #    )
-
                     x_min = max(0, pts_side[:, 0].min() - edge_width)
                     x_max = min(w, pts_side[:, 0].max() + edge_width)
                     y_min = max(0, pts_side[:, 1].min() - edge_width)
@@ -322,7 +307,7 @@ class PuzzleImageModel(nn.Module):
         points: np.ndarray,
         centroid: np.ndarray,
         side: str,
-        epsilon_flat: int = 50,
+        epsilon_flat: int = 30,
          ):
         """Classifies edge from a baseline deviation.
 
