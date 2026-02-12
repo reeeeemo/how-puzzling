@@ -6,9 +6,9 @@ import numpy as np
 from utils.polygons import create_binary_mask, get_polygon_sides
 from rl_env.reward_visual import reward_function
 
-# some links to look into:
+# Custom gymnasium environment that accepts an image and transforms the
+# jigsaw puzzle into an MDP
 # https://gymnasium.farama.org/tutorials/gymnasium_basics/environment_creation/#subclassing-gymnasium-env
-# https://github.com/johnnycode8/gym_custom_env/blob/main/v0_warehouse_robot_env.py
 
 
 # register as gym environment for gym.make()
@@ -90,15 +90,18 @@ class Puzzler(gym.Env):
                 )
                 self.piece_classifications[pid] = (piece_type, piece_sides)
 
-        grid_w, grid_h = self._get_grid_size()
-        self.grid = np.full((grid_h, grid_w), -1, dtype=int)
+        self.grid_w, self.grid_h = self._get_grid_size()
+        self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=int)
         self.cur_steps = 0
         self.current_assembled = {}  # piece_id -> (row, col)
 
         # ex action: (piece_id, grid_x, grid_y)
         self.action_space = spaces.MultiDiscrete(
-            [self.num_pieces, grid_w, grid_h]
+            [self.num_pieces, self.grid_w, self.grid_h]
         )
+
+        ref_h = self.piece_images[0].shape[0]
+        ref_w = self.piece_images[0].shape[1]
 
         # rl model sees cur assembled pieces, remaining ones to choose,
         # grid spots that have been placed,
@@ -106,13 +109,13 @@ class Puzzler(gym.Env):
         self.observation_space = spaces.Dict({
             "partial_assembly": spaces.Box(
                 low=0, high=255,
-                shape=self.target_image.shape,
+                shape=(ref_h*self.grid_h, ref_w*self.grid_w, 3),
                 dtype=np.uint8
             ),
             "remaining_pieces": spaces.Discrete(self.num_pieces + 1),
             "placed_grid": spaces.Box(
                 low=-1, high=self.num_pieces-1,
-                shape=(grid_w, grid_h),
+                shape=(self.grid_w, self.grid_h),
                 dtype=np.int64
             ),
             "selected_edge_candidates": spaces.Box(
@@ -125,9 +128,11 @@ class Puzzler(gym.Env):
 
     def _get_grid_size(self):
         """Get size of puzzle grid in width X height format."""
-        num_left = len([idx for idx, types in self.piece_classifications.items()
+        num_left = len([idx for idx, types
+                        in self.piece_classifications.items()
                        if "left" in types[0]])
-        num_top = len([idx for idx, types in self.piece_classifications.items()
+        num_top = len([idx for idx, types
+                       in self.piece_classifications.items()
                       if "top" in types[0]])
         return num_top, num_left
 
@@ -255,7 +260,6 @@ class Puzzler(gym.Env):
         Returns:
             ndarray: Image of all assembled puzzle pieces
         """
-        # partial_assembly = np.zeros(self.target_image.shape, dtype=np.uint8)
         ref_h = self.piece_images[0].shape[0]
         ref_w = self.piece_images[0].shape[1]
 
@@ -343,8 +347,7 @@ class Puzzler(gym.Env):
         super().reset(seed=seed)
 
         # init grid
-        grid_w, grid_h = self._get_grid_size()
-        self.grid = np.full((grid_h, grid_w), -1, dtype=int)
+        self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=int)
         self.cur_steps = 0
         self.current_assembled = {}
         self.remaining_pieces = self.num_pieces

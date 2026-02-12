@@ -11,6 +11,20 @@ import rl_env.env_puzzler
 
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
+# Visualization of the custom gymnasium environment "puzzler"
+
+# Use (root): python -m rl_env.puzzler_visual
+#   --dataset <dataset_path>
+#   --model <model_path>
+#   --split <split>
+#   --random <true/false>
+# Example:
+# python -m rl_env.puzzler_visual
+#   --dataset dataset/data/jigsaw_puzzle
+#   --model model/puzzle-segment-model/best.pt
+#   --split test
+#   --random true
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -28,6 +42,10 @@ def main():
                         type=str,
                         required=True,
                         help="split to inference")
+    parser.add_argument("--random",
+                        type=bool,
+                        required=True,
+                        help="whether to place random or fixed pieces")
     args = parser.parse_args()
 
     project_path = Path(__file__).resolve().parent.parent
@@ -53,9 +71,13 @@ def main():
     print(puzzler.observation_space)
     print(puzzler.action_space)
 
-    random_ = True
+    # IMPORTANT!! If random is False, provide correct piece ID matching here.
+    # Example is images/test/winter_fairy_16p.jpg if you are using the
+    # provided dataset.
+    random_ = args.random
     corr_pieces = [13, 14, 8, 15, 3, 12, 7, 0, 5, 11, 2, 9, 4, 6, 1, 10]
 
+    # init env setup
     obs, info = puzzler.reset()
     valid_pieces = obs["valid_pieces"]
     available_pids = np.where(valid_pieces == 1)[0]
@@ -63,6 +85,9 @@ def main():
     grid_size_h, _ = info["grid_size"]
     i = 0
 
+    # take from all available pieces so we don't accidently truncate
+    # because of misplaced pieces
+    # FOR THIS EXAMPLE PIECES ARE PLACES Y_0, Y_1, Y_2 FIRST THEN MOVE X
     if random_:
         while len(available_pids) > 0:
             print("\n\n-----------")
