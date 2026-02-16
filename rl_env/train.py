@@ -4,7 +4,8 @@ import argparse
 from pathlib import Path
 import cv2
 import numpy as np
-from stable_baselines3 import PPO
+from sb3_contrib import MaskablePPO
+from sb3_contrib.common.wrappers import ActionMasker
 from stable_baselines3.common.env_checker import check_env
 from dataset.dataset import PuzzleDataset
 import rl_env.env_puzzler
@@ -23,6 +24,26 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #   --dataset dataset/data/jigsaw_puzzle
 #   --model model/puzzle-segment-model/best.pt
 #   --split test
+
+
+def get_valid_masks(env):
+    env = env.unwrapped
+
+    total_actions = env.num_pieces * env.grid_w * env.grid_h
+    valid_mask = np.ones(total_actions, dtype=bool)
+
+    for pid in env.current_assembled.keys():
+        start_idx = pid * (env.grid_w * env.grid_h)
+        end_idx = start_idx + (env.grid_w * env.grid_h)
+        valid_mask[start_idx:end_idx] = False
+
+    for y in range(env.grid_h):
+        for x in range(env.grid_w):
+            if env.grid[y, x] != -1:
+                for pid in range(env.num_pieces):
+                    action_idx = env.coords_to_action(pid=pid, x=x, y=y)
+                    valid_mask[action_idx] = False
+    return valid_mask
 
 
 def main():
@@ -58,7 +79,7 @@ def main():
     ]
     puzzler = gym.make(
         "puzzler-v0",
-        image=images[0],
+        images=images[:3],
         seg_model_path=model_path,
         max_steps=100,
         device=DEVICE
@@ -69,13 +90,37 @@ def main():
     check_env(puzzler)
 
     output_folder = Path(__file__).resolve().parent / "train"
+    model_file = output_folder / "ppo_puzzler"
     output_folder.mkdir(parents=True, exist_ok=True)
+
+    puzzler = ActionMasker(puzzler, get_valid_masks)
     # create model and traiN
-    model = PPO("MultiInputPolicy",
-                puzzler,
-                verbose=1,
-                device=DEVICE)
-    model.learn(total_timesteps=10000, progress_bar=True)
+
+    if (Path(str(model_file) + ".zip")).exists():
+        print("LOADING FROM MODEL FILE")
+        model = MaskablePPO.load(
+            str(model_file),
+            env=puzzler,
+            device=DEVICE
+        )
+    else:
+        print("NEW MODEL!!!")
+        model = MaskablePPO(
+            "MultiInputPolicy",
+            puzzler,
+            learning_rate=3e-4,
+            n_steps=2048,
+            n_epochs=10,
+            clip_range_vf=0.2,
+            ent_coef=0.02,
+            max_grad_norm=0.5,
+            verbose=1,
+            device=DEVICE,
+            tensorboard_log=str(output_folder / "tb_logs")
+        )
+    model.learn(total_timesteps=500000,
+                progress_bar=True,
+                reset_num_timesteps=False)
     model.save(str(output_folder / "ppo_puzzler"))
 
 

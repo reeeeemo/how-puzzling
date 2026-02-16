@@ -87,7 +87,7 @@ def reward_function(mask_a: np.ndarray,
         Reward: whitespace + overlap + top similar
     """
     if mask_a is None or mask_b is None or similarity_score <= 0:
-        return -5.0
+        return -100
 
     h_a, w_a = mask_a.shape[:2]
     h_b, w_b = mask_b.shape[:2]
@@ -96,15 +96,15 @@ def reward_function(mask_a: np.ndarray,
     centroid_a = model.get_centroid(mask_a, binary_mask=True)
     centroid_b = model.get_centroid(mask_b, binary_mask=True)
     if centroid_a is None or centroid_b is None:
-        return -5.0
+        return -100
 
     # current side polygon to check
     side_a_pts = pts_a.get(side_a, np.array([]))
     if len(side_a_pts) == 0:
-        return -5.0
+        return -100
     side_b_pts = pts_b.get(side_b, np.array([]))
     if len(side_b_pts) == 0:
-        return -5.0
+        return -100
 
     cx_a, cy_a = int(centroid_a[0]), int(centroid_a[1])
     cx_b, cy_b = int(centroid_b[0]), int(centroid_b[1])
@@ -234,8 +234,8 @@ def reward_function(mask_a: np.ndarray,
         cv2.destroyAllWindows()
 
     return (
-        (similarity_score * 1000) -
-        (1000 * edge_distance)
+        (similarity_score * 30) -
+        (30 * min(edge_distance, 1))
     )
 
 
@@ -257,6 +257,7 @@ def visualize_reward(model_path: str, images: list):
         poly_sides = {}
         piece_masks = {}
         piece_classifications = {}
+        resize_ratio = 0.5
         for pid in range(n_pieces):
             if pid >= len(results[idx].masks.xy):
                 piece_masks[pid] = None
@@ -266,12 +267,14 @@ def visualize_reward(model_path: str, images: list):
             piece_masks[pid] = create_binary_mask(
                 poly,
                 boxes[pid],
-                images[idx].shape[:2]
+                images[idx].shape[:2],
+                resize_ratio=resize_ratio
             )
             poly_sides[pid] = get_polygon_sides(
                 poly=poly,
                 bbox=boxes[pid],
-                model=model
+                model=model,
+                resize_ratio=resize_ratio
             )
             piece_edges = [
                 meta for meta in edge_metadata

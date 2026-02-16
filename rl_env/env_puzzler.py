@@ -5,6 +5,7 @@ from gymnasium.envs.registration import register
 import numpy as np
 from utils.polygons import create_binary_mask, get_polygon_sides
 from rl_env.reward_visual import reward_function
+import cv2
 
 # Custom gymnasium environment that accepts an image and transforms the
 # jigsaw puzzle into an MDP
@@ -28,7 +29,7 @@ class Puzzler(gym.Env):
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
     def __init__(self,
-                 image: np.ndarray,
+                 images: list[np.ndarray],
                  seg_model_path: str,
                  max_steps=100,
                  device: str = "cpu",
@@ -37,7 +38,50 @@ class Puzzler(gym.Env):
         self.max_steps = max_steps
         self.device = device
         self.model = PuzzleImageModel(model_name=seg_model_path, device=device)
+        self.resize_ratio = 0.5  # to resize images/masks to save memory
 
+        self.images = [img.copy() for img in images]
+
+        self._load_puzzle(self.images[0])
+
+        self.grid_w, self.grid_h = self._get_grid_size()
+        self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=int)
+        self.cur_steps = 0
+        self.current_assembled = {}  # piece_id -> (row, col)
+
+        # ex action: (piece_id, grid_x, grid_y)
+        self.action_space = spaces.Discrete(
+            self.num_pieces * self.grid_w * self.grid_h
+        )
+
+        ref_h = self.piece_images[0].shape[0]
+        ref_w = self.piece_images[0].shape[1]
+
+        # rl model sees cur assembled pieces, remaining ones to choose,
+        # grid spots that have been placed,
+        # selected piece, and candidates for selected piece
+        self.observation_space = spaces.Dict({
+            "partial_assembly": spaces.Box(
+                low=0, high=255,
+                shape=(max(ref_h*self.grid_h, 640),
+                       max(ref_w*self.grid_w, 640), 3),
+                dtype=np.uint8
+            ),
+            "remaining_pieces": spaces.Discrete(self.num_pieces + 1),
+            "placed_grid": spaces.Box(
+                low=-1, high=self.num_pieces-1,
+                shape=(self.grid_w, self.grid_h),
+                dtype=np.int64
+            ),
+            "selected_edge_candidates": spaces.Box(
+                low=-1.0, high=1.0,
+                shape=self.edge_similarities.shape,
+                dtype=np.float16
+            ),
+            "valid_pieces": spaces.MultiBinary(self.num_pieces)
+        })
+
+    def _load_puzzle(self, image: np.ndarray):
         self.target_image = image.copy()
         results, similarities, edges_metadata = self.model([self.target_image])
 
@@ -67,18 +111,21 @@ class Puzzler(gym.Env):
             self.piece_masks[pid] = create_binary_mask(
                 poly=poly,
                 box=box,
-                img_shape=self.target_image.shape[:2]
+                img_shape=self.target_image.shape[:2],
+                resize_ratio=self.resize_ratio
             )
             self.poly_sides[pid] = get_polygon_sides(
                 poly=poly,
                 bbox=box,
-                model=self.model
+                model=self.model,
+                resize_ratio=self.resize_ratio
             )
             self.piece_images[pid] = create_binary_mask(
                 poly=poly,
                 box=box,
                 img_shape=self.target_image.shape[:2],
-                image=self.target_image
+                image=self.target_image,
+                resize_ratio=self.resize_ratio
             )
             piece_edges = [
                 meta for meta in self.edges_metadata
@@ -89,42 +136,6 @@ class Puzzler(gym.Env):
                     edge_metadata=piece_edges
                 )
                 self.piece_classifications[pid] = (piece_type, piece_sides)
-
-        self.grid_w, self.grid_h = self._get_grid_size()
-        self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=int)
-        self.cur_steps = 0
-        self.current_assembled = {}  # piece_id -> (row, col)
-
-        # ex action: (piece_id, grid_x, grid_y)
-        self.action_space = spaces.MultiDiscrete(
-            [self.num_pieces, self.grid_w, self.grid_h]
-        )
-
-        ref_h = self.piece_images[0].shape[0]
-        ref_w = self.piece_images[0].shape[1]
-
-        # rl model sees cur assembled pieces, remaining ones to choose,
-        # grid spots that have been placed,
-        # selected piece, and candidates for selected piece
-        self.observation_space = spaces.Dict({
-            "partial_assembly": spaces.Box(
-                low=0, high=255,
-                shape=(ref_h*self.grid_h, ref_w*self.grid_w, 3),
-                dtype=np.uint8
-            ),
-            "remaining_pieces": spaces.Discrete(self.num_pieces + 1),
-            "placed_grid": spaces.Box(
-                low=-1, high=self.num_pieces-1,
-                shape=(self.grid_w, self.grid_h),
-                dtype=np.int64
-            ),
-            "selected_edge_candidates": spaces.Box(
-                low=-1.0, high=1.0,
-                shape=self.edge_similarities.shape,
-                dtype=np.float16
-            ),
-            "valid_pieces": spaces.MultiBinary(self.num_pieces)
-        })
 
     def _get_grid_size(self):
         """Get size of puzzle grid in width X height format."""
@@ -155,12 +166,19 @@ class Puzzler(gym.Env):
         return self.edge_similarities[edge_idx_a, edge_idx_b].item()
 
     def _reward_function(self, cur_pid: int):
-        """Computes reward of piece"""
+        """Computes reward of piece.
+
+        Connectivity of pieces + positional alignment + follows puzzle rules.
+        Args:
+            cur_pid: current PID that was placed
+        Returns:
+            reward: float representing reward achieved by agent.
+        """
         cardinal_directions = {
             "left": (-1, 0),
             "right": (1, 0),
-            "top": (0, 1),
-            "bottom": (0, -1)
+            "top": (0, -1),
+            "bottom": (0, 1)
         }
         opposites = {
             "top": "bottom",
@@ -169,11 +187,41 @@ class Puzzler(gym.Env):
             "left": "right"
         }
         cur_x, cur_y = self.current_assembled[cur_pid]
-        # base = -10 for forcing curiousity, plus in faster steps
-        # amplified by 10 because sim/edge_sim score is quite high
-        reward = -10 - (self.cur_steps*10)
+        cur_type, cur_sides = self.piece_classifications[cur_pid]
+        reward = 0.0
+        num_neighbors = 0
 
-        # add sim/edge_sim for pieces that will connect
+        # add positional rewards
+        if cur_type.startswith("corner_"):
+            flat_edges = cur_type.split("_")[1:]
+            is_correct_corner = True
+            for edge in flat_edges:
+                if edge == "left" and cur_x != 0:
+                    is_correct_corner = False
+                elif edge == "right" and cur_x != self.grid_w - 1:
+                    is_correct_corner = False
+                elif edge == "top" and cur_y != 0:
+                    is_correct_corner = False
+                elif edge == "bottom" and cur_y != self.grid_h - 1:
+                    is_correct_corner = False
+            reward += 15 if is_correct_corner else -15
+        elif cur_type.startswith("side_"):
+            flat_edge = cur_type.split("_")[1]
+            is_correct_edge = (
+                (flat_edge == "left" and cur_x == 0) or
+                (flat_edge == "right" and cur_x == self.grid_w - 1) or
+                (flat_edge == "top" and cur_y == 0) or
+                (flat_edge == "bottom" and cur_y == self.grid_h - 1)
+            )
+            reward += 15 if is_correct_edge else -15
+        elif cur_type == "internal":
+            is_internal_pos = (
+                0 < cur_x < self.grid_w - 1 and
+                0 < cur_y < self.grid_h - 1
+            )
+            reward += 15 if is_internal_pos else -15
+
+        # for connecting pieces find edge similarity + connectivity reward
         for side, dir_vec in cardinal_directions.items():
             opposite_side = opposites[side]
             match_x, match_y = cur_x + dir_vec[0], cur_y + dir_vec[1]
@@ -187,6 +235,22 @@ class Puzzler(gym.Env):
             match_pid = self.grid[match_y][match_x]
             if match_pid == -1:
                 continue
+            num_neighbors += 1
+
+            # check puuzzle piece match eligibility
+            match_type, match_sides = self.piece_classifications[match_pid]
+            violations = self._check_piece_rule_eligibility(
+                cur_type=cur_type,
+                cur_sides=cur_sides,
+                match_type=match_type,
+                match_sides=match_sides,
+                cur_side=side,
+                opposite_side=opposite_side,
+                opposites=opposites
+            )
+            if violations > 0:
+                reward -= 30 * violations
+                break
 
             pts_a = self.poly_sides.get(cur_pid)
             pts_b = self.poly_sides.get(match_pid)
@@ -198,7 +262,7 @@ class Puzzler(gym.Env):
             )
 
             if side in pts_a and opposite_side in pts_b:
-                reward += reward_function(
+                edge_reward = reward_function(
                     mask_a=self.piece_masks.get(cur_pid),
                     mask_b=self.piece_masks.get(match_pid),
                     pts_a=pts_a,
@@ -208,7 +272,108 @@ class Puzzler(gym.Env):
                     model=self.model,
                     similarity_score=similarity
                 )
+                reward += edge_reward
+        if num_neighbors == 0 and len(self.current_assembled) > 1:
+            reward -= 30
         return reward
+
+    def _check_piece_rule_eligibility(self,
+                                      cur_type: str,
+                                      cur_sides: dict,
+                                      match_type: str,
+                                      match_sides: dict,
+                                      cur_side: str,
+                                      opposite_side: str,
+                                      opposites: dict) -> int:
+        """Checks if piece has violated any puzzle rules.
+
+        Args:
+            cur_type: type of current piece
+            cur_sides: all side types of current piece
+            match_type: type of piece to match
+            match_sides: all side types of matching piece
+            cur_side: current side being checked
+            opposite_side: opposing side being checked
+            opposites: dict of side: opposite_side
+        Returns:
+            num_fails: integer detailing # of fails
+        """
+        num_fails = 0
+        # cannot compare flats or be same side type (knob-knob)
+        if (
+            (match_sides.get(opposite_side) == "flat") or
+            (match_sides.get(opposite_side) == cur_sides.get(cur_side))
+        ):
+            num_fails += 1
+
+        # side-to-side can only be same-border
+        if (
+            match_type.startswith("side_") and
+            cur_type.startswith("side_") and
+            match_type != cur_type
+        ):
+            num_fails += 1
+        # no corner -> internal, only side pieces
+        if (
+            (
+                match_type.startswith("corner_") and
+                cur_type == "internal"
+            ) or
+            (
+                cur_type.startswith("corner_") and
+                match_type == "internal"
+            )
+        ):
+            num_fails += 1
+
+        # corner to corner only happens if 1 side opp and 1 side same
+        if (
+            cur_type.startswith("corner_") and
+            match_type.startswith("corner_")
+        ):
+            match_flat_edges = match_type.split("_")[1:]
+            cur_flat_edges = cur_type.split("_")[1:]
+
+            intersections = set(match_flat_edges) & set(cur_flat_edges)
+            opp_intersections = (
+                set([opposites[side] for side in match_flat_edges]) &
+                set(cur_flat_edges)
+            )
+            if len(intersections) <= 0 or len(opp_intersections) <= 0:
+                num_fails += 1
+
+        # corner - side can only happen if same flat side
+        if (
+            cur_type.startswith("corner_") and
+            match_type.startswith("side_")
+        ):
+            match_flat_edge = match_type.split("_")[1]
+            if match_flat_edge not in cur_type.split("_")[1:]:
+                num_fails += 1
+        elif (
+            cur_type.startswith("side_") and
+            match_type.startswith("corner_")
+        ):
+            cur_flat_edge = cur_type.split("_")[1]
+            if cur_flat_edge not in match_type.split("_")[1:]:
+                num_fails += 1
+
+        # if side/internal, has to be opposite of flat
+        if (
+            cur_type.startswith("side_")
+            and match_type == "internal"
+        ):
+            cur_flat_edge = cur_type.split("_")[1]
+            if cur_side != opposites[cur_flat_edge]:
+                num_fails += 1
+        elif (
+            cur_type == "internal"
+            and match_type.startswith("side_")
+        ):
+            match_flat_edge = match_type.split("_")[1]
+            if opposite_side != opposites[match_flat_edge]:
+                num_fails += 1
+        return num_fails
 
     def step(self, action):
         """Execute one timestep within the environment.
@@ -219,18 +384,18 @@ class Puzzler(gym.Env):
         Returns:
             tuple (observation, reward, terminated, truncated, info)
         """
-        pid, x, y = action
+        pid, x, y = self.action_to_coords(action)
         terminated, truncated = False, False
 
         # piece already placed,
         # max steps reached,
-        # piece already in place at pos then return bad results
+        # piece already in place at pos then return very bad reward
         if (
            self.current_assembled.get(pid) is not None or
            self.cur_steps >= self.max_steps or
            self.grid[y][x] != -1
            ):
-            reward = -1000
+            reward = -50
             truncated = True
             obs = self._get_obs()
             info = self._get_info()
@@ -241,16 +406,21 @@ class Puzzler(gym.Env):
         self.remaining_pieces -= 1
         self.cur_steps += 1
 
-        # reward function is going to be all 4 cardinal directions
-        # we need to get the connectivity of them all (piecemask to piecemask)
-        # so edge distance + sim score
+        # reward func that consists of:
+        # connectivity of pieces + position + align with puzzle rules
         reward = self._reward_function(pid)
         obs = self._get_obs()
         info = self._get_info()
 
+        # progress reward / reward for finishing puzzle
+        reward += (
+            (self.num_pieces - self.remaining_pieces) /
+            (self.num_pieces)
+        )
         if self.remaining_pieces == 0:
+            reward += 50
             terminated = True
-            reward += 1000
+
         return obs, reward, terminated, truncated, info
 
     def _render_assembly(self) -> np.ndarray:
@@ -297,6 +467,7 @@ class Puzzler(gym.Env):
             dest_region = partial_assembly[dst_y1:dst_y2, dst_x1:dst_x2]
             dest_region[piece_mask] = mask_crop[piece_mask]
 
+        partial_assembly = cv2.resize(partial_assembly, (640, 640))
         return partial_assembly
 
     def _get_obs(self):
@@ -323,7 +494,6 @@ class Puzzler(gym.Env):
         Returns:
             dict: Info with distance between agent and target
         """
-        # maybe at some point add human rendering so return partial assembly?
         return {
             "num_pieces": self.num_pieces,
             "remaining_pieces": self.remaining_pieces,
@@ -336,7 +506,7 @@ class Puzzler(gym.Env):
         }
 
     def reset(self, seed=None, options=None):
-        """Start a new episode.
+        """Start a new episode by randomly selecing a new puzzle.
 
         Args:
             seed: Random seed for reproducible episodes
@@ -346,8 +516,12 @@ class Puzzler(gym.Env):
         """
         super().reset(seed=seed)
 
+        # load random puzzle from list of images
+        idx = self.np_random.integers(0, len(self.images))
+        self._load_puzzle(self.images[idx])
+
         # init grid
-        self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=int)
+        self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=np.int64)
         self.cur_steps = 0
         self.current_assembled = {}
         self.remaining_pieces = self.num_pieces
@@ -356,3 +530,15 @@ class Puzzler(gym.Env):
         info = self._get_info()
 
         return obs, info
+
+    def action_to_coords(self, action):
+        """Converts action integer to pid + coords (x,y)."""
+        pid = action // (self.grid_w * self.grid_h)
+        remainder = action % (self.grid_w * self.grid_h)
+        x = remainder // self.grid_h
+        y = remainder % self.grid_h
+        return pid, x, y
+
+    def coords_to_action(self, pid, x, y):
+        """Converts pid + coords (x, y) into an action integer."""
+        return pid * (self.grid_w * self.grid_h) + x * self.grid_h + y

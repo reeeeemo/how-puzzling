@@ -308,7 +308,7 @@ class PuzzleImageModel(nn.Module):
         centroid: np.ndarray,
         side: str,
         epsilon_flat: int = 30,
-         ):
+         ) -> str:
         """Classifies edge from a baseline deviation.
 
         Args:

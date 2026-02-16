@@ -1,7 +1,6 @@
-# data
+# data and rl training data
 dataset/data/*
-output/*
-metrics/*
+rl_env/train/*
 
 # anything thats in model except for the python files needed
 model/*

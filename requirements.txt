@@ -1,7 +1,9 @@
-torch --index-url https://download.pytorch.org/whl/cu129
-torchvision --index-url https://download.pytorch.org/whl/cu129
+torch --index-url https://download.pytorch.org/whl/cu131
+torchvision --index-url https://download.pytorch.org/whl/cu131
 ultralytics
 opencv-python
 git+https://github.com/huggingface/transformers
 accelerate
 gymnasium
+# stable_baselines3[extra]
+pip install sb3-contrib

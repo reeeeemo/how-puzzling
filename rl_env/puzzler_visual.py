@@ -5,7 +5,9 @@ import torch
 import cv2
 import numpy as np
 from dataset.dataset import PuzzleDataset
+from sb3_contrib import MaskablePPO
 import random
+from rl_env.train import get_valid_masks
 
 import rl_env.env_puzzler
 
@@ -17,13 +19,13 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #   --dataset <dataset_path>
 #   --model <model_path>
 #   --split <split>
-#   --random <true/false>
+#   --model <optional arg> (using a pretrained model)
 # Example:
 # python -m rl_env.puzzler_visual
 #   --dataset dataset/data/jigsaw_puzzle
 #   --model model/puzzle-segment-model/best.pt
 #   --split test
-#   --random true
+#   --model
 
 
 def main():
@@ -42,10 +44,9 @@ def main():
                         type=str,
                         required=True,
                         help="split to inference")
-    parser.add_argument("--random",
-                        type=bool,
-                        required=True,
-                        help="whether to place random or fixed pieces")
+    parser.add_argument("--use-model",
+                        action="store_true",
+                        help="use trained RL model")
     args = parser.parse_args()
 
     project_path = Path(__file__).resolve().parent.parent
@@ -62,7 +63,7 @@ def main():
     ]
     puzzler = gym.make(
         "puzzler-v0",
-        image=images[0],
+        images=images[:5],
         seg_model_path=model_path,
         max_steps=100,
         device=DEVICE
@@ -70,12 +71,6 @@ def main():
 
     print(puzzler.observation_space)
     print(puzzler.action_space)
-
-    # IMPORTANT!! If random is False, provide correct piece ID matching here.
-    # Example is images/test/winter_fairy_16p.jpg if you are using the
-    # provided dataset.
-    random_ = args.random
-    corr_pieces = [13, 14, 8, 15, 3, 12, 7, 0, 5, 11, 2, 9, 4, 6, 1, 10]
 
     # init env setup
     obs, info = puzzler.reset()
@@ -88,14 +83,22 @@ def main():
     # take from all available pieces so we don't accidently truncate
     # because of misplaced pieces
     # FOR THIS EXAMPLE PIECES ARE PLACES Y_0, Y_1, Y_2 FIRST THEN MOVE X
-    if random_:
+    if args.use_model:
+        model = MaskablePPO.load(
+            str(project_path / "rl_env" / "train" / "ppo_puzzler"),
+            env=puzzler,
+            device=DEVICE
+        )
         while len(available_pids) > 0:
             print("\n\n-----------")
-            new_pid = random.choice(available_pids)
-            obs, reward, term, trunc, info = puzzler.step((new_pid, x, y))
+            action_masks = get_valid_masks(puzzler)
+            action, _states = model.predict(obs,
+                                            action_masks=action_masks,
+                                            deterministic=True)
+            obs, reward, term, trunc, info = puzzler.step(action)
             print(f"reward at step {i}: {reward}")
             new_obs = {k: v for k, v in obs.items() if k != "partial_assembly"}
-            print(f"OBS: {new_obs}\n\n\nINFO: {info}")
+            # print(f"OBS: {new_obs}\n\n\nINFO: {info}")
             if trunc:
                 print(f"\n\nPuzzler reset at step {i}.\n\n")
                 obs, info = puzzler.reset()
@@ -124,15 +127,19 @@ def main():
                 x += 1
             i += 1
     else:
-        for piece in corr_pieces:
-            print("\n----------")
-            obs, reward, term, trunc, info = puzzler.step((piece, x, y))
+        while len(available_pids) > 0:
+            print("\n\n-----------")
+            new_pid = random.choice(available_pids)
+            action = puzzler.unwrapped.coords_to_action(pid=new_pid, x=x, y=y)
+            obs, reward, term, trunc, info = puzzler.step(action)
             print(f"reward at step {i}: {reward}")
             new_obs = {k: v for k, v in obs.items() if k != "partial_assembly"}
             print(f"OBS: {new_obs}\n\n\nINFO: {info}")
+
             if trunc:
                 print(f"\n\nPuzzler reset at step {i}.\n\n")
                 obs, info = puzzler.reset()
+                available_pids = np.where(obs["valid_pieces"] == 1)[0]
                 i += 1
                 x, y = 0, 0
                 continue
@@ -146,6 +153,7 @@ def main():
                 x, y = 0, 0
                 continue
 
+            available_pids = np.where(obs["valid_pieces"] == 1)[0]
             cv2.imshow("new placed img", obs["partial_assembly"])
             cv2.waitKey(0)
             cv2.destroyAllWindows()
