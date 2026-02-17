@@ -13,4 +13,4 @@ I have listed all experiments in `.md` files across each of the folders of this 
 
 - [Dataset Creation via Model-Based Segmentation](./dataset/DATASET_CREATION.md)
 - [Custom Edge Similarity Metrics](./similarity/SIMILARITY_CALCULATION.md)
-- Reinforcement-Learning Guided Assembly (not done)
+- [Reinforcement-Learning Guided Assembly](./rl_env/RL_CREATION.md) -- **WIP as I am still training models and tuning the reward function**

@@ -37,6 +37,7 @@ def inference(dataset_name: str, model_name: str, split: str):
 
         for c in results.masks.xy:
             contour_np = np.array(c, dtype=np.int32)
+
             cv2.drawContours(new_img,
                              [contour_np],
                              -1,
