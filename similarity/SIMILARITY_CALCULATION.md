@@ -63,7 +63,7 @@ I then computed the Euclidean distance between each edge and each point, then ra
 
 ![Side approximation using euclidean distance](../dataset/results_images/euclidean_approx.png)
 
-*The blue points represent the top points in terms of Euclidean distance, while the black points are each edge of a bounding box*
+> *The blue points represent the top points in terms of Euclidean distance, while the black points are each edge of a bounding box*
 
 Some points are closer purely because of a coordinate I do not want to check for (right and left pieces should not be comparing x values). I fix this by reranking each top 10 points by their opposing coordinate value (for example, right and left has their y-axis being compared). This gives the closest point in a convex polygon to the edge point.
 
@@ -88,7 +88,7 @@ For knobs and holes, I compute the distance from the polygon centroid and the 10
 
 **Finally, after all edges are computed, I compute cosine similarity using each cropped edge of every puzzle piece. This can be visualized by running `similarity.py` according to the instructions listed at the beginning of the file.**
 
-## References (TODO: cite these)
+## References
 
 1. Huamán, A. (n.d.). Goal. OpenCV. <https://docs.opencv.org/4.x/d0/d49/tutorial_moments.html>
 2. Dayala, R. (2020, July 21). 10.4 Hu Moments. Computer Vision. <https://cvexplained.wordpress.com/2020/07/21/10-4-hu-moments/>
