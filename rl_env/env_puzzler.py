@@ -186,6 +186,7 @@ class Puzzler(gym.Env):
             "right": "left",
             "left": "right"
         }
+        pos_reward = 30
         cur_x, cur_y = self.current_assembled[cur_pid]
         cur_type, cur_sides = self.piece_classifications[cur_pid]
         reward = 0.0
@@ -204,7 +205,7 @@ class Puzzler(gym.Env):
                     is_correct_corner = False
                 elif edge == "bottom" and cur_y != self.grid_h - 1:
                     is_correct_corner = False
-            reward += 15 if is_correct_corner else -15
+            reward += pos_reward if is_correct_corner else -pos_reward
         elif cur_type.startswith("side_"):
             flat_edge = cur_type.split("_")[1]
             is_correct_edge = (
@@ -213,13 +214,13 @@ class Puzzler(gym.Env):
                 (flat_edge == "top" and cur_y == 0) or
                 (flat_edge == "bottom" and cur_y == self.grid_h - 1)
             )
-            reward += 15 if is_correct_edge else -15
+            reward += pos_reward if is_correct_edge else -pos_reward
         elif cur_type == "internal":
             is_internal_pos = (
                 0 < cur_x < self.grid_w - 1 and
                 0 < cur_y < self.grid_h - 1
             )
-            reward += 15 if is_internal_pos else -15
+            reward += pos_reward if is_internal_pos else -pos_reward
 
         # for connecting pieces find edge similarity + connectivity reward
         for side, dir_vec in cardinal_directions.items():
