@@ -56,7 +56,7 @@ class PuzzleImageModel(nn.Module):
         )
         return results, similarities, edge_metadata
 
-    def extract_all_edges(self, results, edge_width: int = 60) -> dict:
+    def extract_all_edges(self, results, edge_width: int = 15) -> dict:
         """Extract each edge crop for all pieces.
 
         Args:

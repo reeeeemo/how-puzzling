@@ -29,17 +29,6 @@ In all honesty none of these similarities matter if they do not solve the issue 
 
 My goal is to compute cosine similarity between each edge of a piece and all opposing edges. To do this, I need a consistent way to assign each point $p_i = (x,y)$ to one of the four cardinal sides (top, bottom, left, right) in image coordinates.
 
-I will represent the four cardinal directions as unit vectors. All directions are defined in image coordinates:
-
-```python
-sides = {
-    (0, 1), # bottom
-    (0, -1), # top
-    (-1, 0), # left
-    (1, 0), # right
-}
-```
-
 ### Approximations using Math
 **My first idea** was to use the local normal of the point(perpendicular to the tangent). [This is the result of my calculations](../dataset/results_images/normal_masks.png). As you can see, the flat edges produce the correct direction while any point in the knob/holes of a jigsaw puzzle piece assigns different directions.
 
