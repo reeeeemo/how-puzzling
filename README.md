@@ -1,8 +1,10 @@
 # How Puzzling!
 
-This is my capstone project, a culmination of everything I have learnt during my MSc at the University of Colorado Boulder.
+Automated reconstruction of interlocking jigsaw puzzles using modern vision and reinforcement learning.
 
-While numerous works address the reconstruction of images from geometrically straight fragments (e.g., square, rectangular), few cover interlocking jigsaw puzzles with irregular, convex boundaries. Existing approaches for such puzzles typically depend on heuristics, manual pre-annotation, or shape-only matching without integrating modern zero-shot segmentation.
+This is my MSc capstone project at the University of Colorado Boulder: a culmination of my work in computer vision and machine learning.
+
+While numerous works address the reconstruction of images from geometrically regular fragments (e.g., square, rectangular), few cover interlocking jigsaw puzzles with irregular, convex boundaries. Existing approaches for such puzzles typically depend on heuristics, manual annotations, or shape-only matching without integrating modern foundational models.
 
 "How Puzzling!" demonstrates the feasibility of the automated reconstruction of jigsaw puzzles from images of puzzle pieces on a uniform background. This eliminates the need for human annotation by utilizing model-based segmentation with SAM 3 and YOLOv11, custom edge similarity metrics using DINOv3, and reinforcement-learning guided assembly.
 
