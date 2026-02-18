@@ -1,9 +1,8 @@
-torch --index-url https://download.pytorch.org/whl/cu131
-torchvision --index-url https://download.pytorch.org/whl/cu131
-ultralytics
-opencv-python
-git+https://github.com/huggingface/transformers
-accelerate
-gymnasium
-# stable_baselines3[extra]
-pip install sb3-contrib
+torch --index-url https://download.pytorch.org/whl/cu130 # adjust to your cuda ver
+torchvision --index-url https://download.pytorch.org/whl/cu130 # adjust to your cuda ver
+ultralytics==8.4.14
+opencv-python==4.13.0.92
+git+https://github.com/huggingface/transformers@v5.2.0
+accelerate==1.12.0
+gymnasium==1.2.3
+sb3-contrib==2.7.1
