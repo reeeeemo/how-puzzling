@@ -6,7 +6,9 @@ import cv2
 import numpy as np
 from sb3_contrib import MaskablePPO
 from sb3_contrib.common.wrappers import ActionMasker
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.env_checker import check_env
+from stable_baselines3.common.monitor import Monitor
 from dataset.dataset import PuzzleDataset
 import rl_env.env_puzzler
 
@@ -79,7 +81,7 @@ def main():
     ]
     puzzler = gym.make(
         "puzzler-v0",
-        images=images[:3],
+        images=images[:5],
         seg_model_path=model_path,
         max_steps=100,
         device=DEVICE
@@ -94,6 +96,9 @@ def main():
     output_folder.mkdir(parents=True, exist_ok=True)
 
     puzzler = ActionMasker(puzzler, get_valid_masks)
+    puzzler = Monitor(puzzler)
+    puzzler = DummyVecEnv([lambda: puzzler])
+    puzzler = VecNormalize(puzzler, norm_obs=False)
     # create model and traiN
 
     if (Path(str(model_file) + ".zip")).exists():
@@ -109,19 +114,21 @@ def main():
             "MultiInputPolicy",
             puzzler,
             learning_rate=3e-4,
-            n_steps=2048,
+            n_steps=2048,  # 2048
             n_epochs=10,
-            clip_range_vf=0.2,
-            ent_coef=0.02,
+            clip_range_vf=None,
+            ent_coef=0.02,  # 0.02 originally
             max_grad_norm=0.5,
+            policy_kwargs=dict(net_arch=dict(pi=[256, 128], vf=[256, 256])),
             verbose=1,
             device=DEVICE,
-            tensorboard_log=str(output_folder / "tb_logs")
+            tensorboard_log=str(output_folder / "tb_logs" / "MaskablePPO")
         )
     model.learn(total_timesteps=500000,
                 progress_bar=True,
                 reset_num_timesteps=False)
     model.save(str(output_folder / "ppo_puzzler"))
+    puzzler.save(str(output_folder / "vec_normalize.pkl"))
 
 
 if __name__ == "__main__":

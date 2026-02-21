@@ -6,6 +6,8 @@ import cv2
 import numpy as np
 from dataset.dataset import PuzzleDataset
 from sb3_contrib import MaskablePPO
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
+from stable_baselines3.common.monitor import Monitor
 import random
 from rl_env.train import get_valid_masks
 
@@ -61,28 +63,41 @@ def main():
         cv2.cvtColor(np.array(img), cv2.COLOR_RGB2BGR)
         for img, _ in dataset
     ]
+
+    # init puzzler with vec environments + normalized rewards
+    # that it was trained on
     puzzler = gym.make(
         "puzzler-v0",
-        images=images[:5],
+        images=images[:6],
         seg_model_path=model_path,
         max_steps=100,
         device=DEVICE
     )
+    puzzler = Monitor(puzzler)
+    puzzler = DummyVecEnv([lambda: puzzler])
+    puzzler = VecNormalize.load(
+        str(project_path / "rl_env" / "train" / "vec_normalize.pkl"),
+        puzzler
+    )
+    puzzler.training = False
+    puzzler.norm_reward = False
 
     print(puzzler.observation_space)
     print(puzzler.action_space)
 
     # init env setup
-    obs, info = puzzler.reset()
+    obs = puzzler.reset()
     valid_pieces = obs["valid_pieces"]
     available_pids = np.where(valid_pieces == 1)[0]
     x, y = 0, 0
-    grid_size_h, _ = info["grid_size"]
+    grid_size_h = puzzler.get_attr("grid_h")[0]
     i = 0
 
+    # if no model:
     # take from all available pieces so we don't accidently truncate
     # because of misplaced pieces
-    # FOR THIS EXAMPLE PIECES ARE PLACES Y_0, Y_1, Y_2 FIRST THEN MOVE X
+    # if model just use model information, actions are masked :P
+    # PIECES ARE PLACES Y_0, Y_1, Y_2 FIRST THEN MOVE X
     if args.use_model:
         model = MaskablePPO.load(
             str(project_path / "rl_env" / "train" / "ppo_puzzler"),
@@ -91,33 +106,35 @@ def main():
         )
         while len(available_pids) > 0:
             print("\n\n-----------")
-            action_masks = get_valid_masks(puzzler)
+            action_masks = get_valid_masks(puzzler.venv.envs[0])
             action, _states = model.predict(obs,
                                             action_masks=action_masks,
                                             deterministic=True)
-            obs, reward, term, trunc, info = puzzler.step(action)
-            print(f"reward at step {i}: {reward}")
-            new_obs = {k: v for k, v in obs.items() if k != "partial_assembly"}
-            # print(f"OBS: {new_obs}\n\n\nINFO: {info}")
-            if trunc:
+            obs, rewards, dones, infos = puzzler.step(action)
+            print(f"reward at step {i}: {rewards[0]}")
+            new_info = {
+                k: v for k, v in infos[0].items()
+                if k != "partial_assembly"
+            }
+            print(f"INFO: {new_info}")
+
+            if infos[0]["TimeLimit.truncated"]:
                 print(f"\n\nPuzzler reset at step {i}.\n\n")
-                obs, info = puzzler.reset()
                 available_pids = np.where(obs["valid_pieces"] == 1)[0]
                 i += 1
                 x, y = 0, 0
                 continue
-            if term:
+            if dones[0]:
                 print(f"\n\nPuzzler finished at step {i}.\n\n")
-                cv2.imshow("final placed img", obs["partial_assembly"])
+                cv2.imshow("final placed img", infos[0]["partial_assembly"])
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
-                obs, info = puzzler.reset()
                 i += 1
                 x, y = 0, 0
                 continue
 
             available_pids = np.where(obs["valid_pieces"] == 1)[0]
-            cv2.imshow("new placed img", obs["partial_assembly"])
+            cv2.imshow("new placed img", infos[0]["partial_assembly"])
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -131,30 +148,31 @@ def main():
             print("\n\n-----------")
             new_pid = random.choice(available_pids)
             action = puzzler.unwrapped.coords_to_action(pid=new_pid, x=x, y=y)
-            obs, reward, term, trunc, info = puzzler.step(action)
+            obs, reward, dones, infos = puzzler.step(action)
             print(f"reward at step {i}: {reward}")
-            new_obs = {k: v for k, v in obs.items() if k != "partial_assembly"}
-            print(f"OBS: {new_obs}\n\n\nINFO: {info}")
+            new_info = {
+                k: v for k, v in infos[0].items()
+                if k != "partial_assembly"
+            }
+            print(f"INFO: {new_info}")
 
-            if trunc:
+            if infos[0]["TimeLimit.truncated"]:
                 print(f"\n\nPuzzler reset at step {i}.\n\n")
-                obs, info = puzzler.reset()
                 available_pids = np.where(obs["valid_pieces"] == 1)[0]
                 i += 1
                 x, y = 0, 0
                 continue
-            if term:
+            if dones[0]:
                 print(f"\n\nPuzzler finished at step {i}.\n\n")
-                cv2.imshow("final placed img", obs["partial_assembly"])
+                cv2.imshow("final placed img", infos[0]["partial_assembly"])
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
-                obs, info = puzzler.reset()
                 i += 1
                 x, y = 0, 0
                 continue
 
             available_pids = np.where(obs["valid_pieces"] == 1)[0]
-            cv2.imshow("new placed img", obs["partial_assembly"])
+            cv2.imshow("new placed img", infos[0]["partial_assembly"])
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 

@@ -43,6 +43,8 @@ class Puzzler(gym.Env):
         self.images = [img.copy() for img in images]
 
         self._load_puzzle(self.images[0])
+        self._shuffle_piece_ids()
+        self._encode_similarities()
 
         self.grid_w, self.grid_h = self._get_grid_size()
         self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=int)
@@ -54,32 +56,59 @@ class Puzzler(gym.Env):
             self.num_pieces * self.grid_w * self.grid_h
         )
 
-        ref_h = self.piece_images[0].shape[0]
-        ref_w = self.piece_images[0].shape[1]
-
-        # rl model sees cur assembled pieces, remaining ones to choose,
+        # rl model sees remaining pieces to choose,
         # grid spots that have been placed,
-        # selected piece, and candidates for selected piece
+        # candidates for every edge,
+        # and a feature matrix for every piece and their respective type
         self.observation_space = spaces.Dict({
-            "partial_assembly": spaces.Box(
-                low=0, high=255,
-                shape=(max(ref_h*self.grid_h, 640),
-                       max(ref_w*self.grid_w, 640), 3),
-                dtype=np.uint8
-            ),
             "remaining_pieces": spaces.Discrete(self.num_pieces + 1),
             "placed_grid": spaces.Box(
-                low=-1, high=self.num_pieces-1,
-                shape=(self.grid_w, self.grid_h),
-                dtype=np.int64
+                low=-1, high=1,
+                shape=(self.grid_h * self.grid_w * 7,),
+                dtype=np.float32
             ),
             "selected_edge_candidates": spaces.Box(
                 low=-1.0, high=1.0,
-                shape=self.edge_similarities.shape,
-                dtype=np.float16
+                shape=(self.num_pieces * self.num_pieces * 4,),
+                dtype=np.float64
             ),
+            "piece_encodings": spaces.MultiBinary([self.num_pieces, 7]),
             "valid_pieces": spaces.MultiBinary(self.num_pieces)
         })
+
+    def _shuffle_piece_ids(self):
+        """Randomly permute piece IDs"""
+        perm = self.np_random.permutation(self.num_pieces)
+
+        # remap all dicts
+        self.piece_masks = {
+            perm[pid]: v for pid, v in self.piece_masks.items()
+        }
+        self.poly_sides = {
+            perm[pid]: v for pid, v in self.poly_sides.items()
+        }
+        self.piece_images = {
+            perm[pid]: v
+            for pid, v in self.piece_images.items()
+        }
+        self.piece_classifications = {
+            perm[pid]: v
+            for pid, v in self.piece_classifications.items()
+        }
+
+        # remap piece feats
+        new_feats = np.zeros_like(self.piece_features)
+        for old_pid, new_pid in enumerate(perm):
+            new_feats[new_pid] = self.piece_features[old_pid]
+        self.piece_features = new_feats
+
+        # remap edge idxs
+        self.edge_idx_map = {
+            (perm[pid], side): idx
+            for (pid, side), idx in self.edge_idx_map.items()
+        }
+        for meta in self.edges_metadata:
+            meta["piece_id"] = int(perm[meta["piece_id"]])
 
     def _load_puzzle(self, image: np.ndarray):
         self.target_image = image.copy()
@@ -104,6 +133,7 @@ class Puzzler(gym.Env):
         self.piece_masks = {}  # piece_id: binary mask
         self.poly_sides = {}  # piece_id: dict of side: pts
         self.piece_images = {}  # piece_id: rgb mask
+        self.piece_features = {}  # piece_id: feature array
         self.piece_classifications = {}
         for pid in range(self.num_pieces):
             poly = results[0].masks.xy[pid]
@@ -127,6 +157,7 @@ class Puzzler(gym.Env):
                 image=self.target_image,
                 resize_ratio=self.resize_ratio
             )
+            # get all edges if exists and classfiy piece, then get features
             piece_edges = [
                 meta for meta in self.edges_metadata
                 if meta["piece_id"] == pid
@@ -136,6 +167,42 @@ class Puzzler(gym.Env):
                     edge_metadata=piece_edges
                 )
                 self.piece_classifications[pid] = (piece_type, piece_sides)
+                features_vec = [0 for _ in range(7)]
+                types = ["corner", "side", "internal"]
+                for i, type in enumerate(types):
+                    features_vec[i] = int(piece_type.startswith(type))
+
+                sides = ["left", "right", "top", "bottom"]
+                for i, side in enumerate(sides):
+                    features_vec[i+3] = int(side in piece_type)
+
+                self.piece_features[pid] = features_vec
+        # encode piece features to a numpy vector
+        self.piece_features = np.array([
+            self.piece_features[pid] for pid in range(self.num_pieces)
+        ], dtype=np.int8)
+
+    def _encode_similarities(self):
+        """Encode edge similarities into a cleaner vector."""
+        sides = ["left", "right", "top", "bottom"]
+        opposites = {
+            "left": "right",
+            "right": "left",
+            "top": "bottom",
+            "bottom": "top"
+        }
+        sim_mat = np.zeros((self.num_pieces, self.num_pieces, 4),
+                           dtype=np.float64)
+        for pid_a in range(self.num_pieces):
+            for pid_b in range(self.num_pieces):
+                if pid_a == pid_b:
+                    continue
+                for s_idx, side_a in enumerate(sides):
+                    s = self._get_edge_similarity(
+                        pid_a, side_a, pid_b, opposites[side_a]
+                    )
+                    sim_mat[pid_a, pid_b, s_idx] = s if s is not None else -1.0
+        self.observation_edge_sims = sim_mat
 
     def _get_grid_size(self):
         """Get size of puzzle grid in width X height format."""
@@ -187,6 +254,7 @@ class Puzzler(gym.Env):
             "left": "right"
         }
         pos_reward = 30
+        neg_reward = 10
         cur_x, cur_y = self.current_assembled[cur_pid]
         cur_type, cur_sides = self.piece_classifications[cur_pid]
         reward = 0.0
@@ -205,7 +273,7 @@ class Puzzler(gym.Env):
                     is_correct_corner = False
                 elif edge == "bottom" and cur_y != self.grid_h - 1:
                     is_correct_corner = False
-            reward += pos_reward if is_correct_corner else -pos_reward
+            reward += pos_reward if is_correct_corner else -neg_reward
         elif cur_type.startswith("side_"):
             flat_edge = cur_type.split("_")[1]
             is_correct_edge = (
@@ -214,13 +282,13 @@ class Puzzler(gym.Env):
                 (flat_edge == "top" and cur_y == 0) or
                 (flat_edge == "bottom" and cur_y == self.grid_h - 1)
             )
-            reward += pos_reward if is_correct_edge else -pos_reward
+            reward += pos_reward if is_correct_edge else -neg_reward
         elif cur_type == "internal":
             is_internal_pos = (
                 0 < cur_x < self.grid_w - 1 and
                 0 < cur_y < self.grid_h - 1
             )
-            reward += pos_reward if is_internal_pos else -pos_reward
+            reward += pos_reward if is_internal_pos else -neg_reward
 
         # for connecting pieces find edge similarity + connectivity reward
         for side, dir_vec in cardinal_directions.items():
@@ -250,8 +318,7 @@ class Puzzler(gym.Env):
                 opposites=opposites
             )
             if violations > 0:
-                reward -= 30 * violations
-                break
+                reward -= neg_reward * violations
 
             pts_a = self.poly_sides.get(cur_pid)
             pts_b = self.poly_sides.get(match_pid)
@@ -275,7 +342,7 @@ class Puzzler(gym.Env):
                 )
                 reward += edge_reward
         if num_neighbors == 0 and len(self.current_assembled) > 1:
-            reward -= 30
+            reward -= neg_reward
         return reward
 
     def _check_piece_rule_eligibility(self,
@@ -481,11 +548,15 @@ class Puzzler(gym.Env):
         for pid in self.current_assembled.keys():
             valid_pieces_mask[pid] = 0
 
+        placed_grid = np.full((self.grid_h, self.grid_w, 7), -1.0,
+                              dtype=np.float32)
+        for pid, (x, y) in self.current_assembled.items():
+            placed_grid[y, x] = self.piece_features[pid]
         return {
-            "partial_assembly": self._render_assembly(),
             "remaining_pieces": self.remaining_pieces,
-            "placed_grid": self.grid,
-            "selected_edge_candidates": self.edge_similarities,
+            "placed_grid": placed_grid.flatten(),
+            "selected_edge_candidates": self.observation_edge_sims.flatten(),
+            "piece_encodings": self.piece_features,
             "valid_pieces": valid_pieces_mask
         }
 
@@ -496,6 +567,7 @@ class Puzzler(gym.Env):
             dict: Info with distance between agent and target
         """
         return {
+            "partial_assembly": self._render_assembly(),
             "num_pieces": self.num_pieces,
             "remaining_pieces": self.remaining_pieces,
             "total_eligible_edges": len(
@@ -520,6 +592,8 @@ class Puzzler(gym.Env):
         # load random puzzle from list of images
         idx = self.np_random.integers(0, len(self.images))
         self._load_puzzle(self.images[idx])
+        self._shuffle_piece_ids()
+        self._encode_similarities()
 
         # init grid
         self.grid = np.full((self.grid_h, self.grid_w), -1, dtype=np.int64)
