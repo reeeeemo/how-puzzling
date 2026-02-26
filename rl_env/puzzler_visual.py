@@ -36,6 +36,7 @@ DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 #   --normalized_env rl_env/train/ppo-puzzler/vec_normalize.pkl
 #   --record_path replay.mp4
 
+
 def parse_args():
     parser = argparse.ArgumentParser(
         prog="Visualization of Custom Gymnasium Environment"
@@ -63,12 +64,13 @@ def parse_args():
                         help="path to record .mp4 video to")
     return parser.parse_args()
 
+
 def start_puzzle_reconstruction(
-        env: gym.Env, 
+        env: gym.Env,
         model: MaskablePPO,
         video_writer: cv2.VideoWriter,
         available_pids: np.ndarray
-    ):
+     ):
     """Start puzzle reconstruction. Record and use model if possible.
 
     Places pieces first on the y-axis, then moves across the x-axis.
@@ -98,7 +100,7 @@ def start_puzzle_reconstruction(
                 new_pid = random.choice(available_pids)
                 action = env.unwrapped.coords_to_action(pid=new_pid, x=x, y=y)
             obs, reward, dones, infos = env.step(action)
-            
+
             print(f"reward at step {i}: {reward}")
             new_info = {
                 k: v for k, v in infos[0].items()
@@ -141,7 +143,7 @@ def start_puzzle_reconstruction(
         if video_writer:
             video_writer.release()
         env.close()
-    
+
 
 def main():
     print(f"device: {DEVICE}")
@@ -179,7 +181,7 @@ def main():
     else:
         warnings.warn(
             """
-            No VecNormalized trained environment was given. 
+            No VecNormalized trained environment was given.
             Creating new environment...
             """
         )
@@ -219,6 +221,7 @@ def main():
         video_writer=out,
         available_pids=available_pids
     )
-    
+
+
 if __name__ == "__main__":
     main()
