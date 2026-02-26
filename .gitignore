@@ -6,6 +6,9 @@ rl_env/train/*
 model/*
 !model/*.py
 
+# in case a video recordin gets caught
+*.mp4
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]

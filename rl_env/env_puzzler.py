@@ -33,12 +33,14 @@ class Puzzler(gym.Env):
                  seg_model_path: str,
                  max_steps=100,
                  device: str = "cpu",
+                 render_mode: str = None
                  ):
         super().__init__()
         self.max_steps = max_steps
         self.device = device
         self.model = PuzzleImageModel(model_name=seg_model_path, device=device)
         self.resize_ratio = 0.5  # to resize images/masks to save memory
+        self.render_mode = render_mode
 
         self.images = [img.copy() for img in images]
 
@@ -567,7 +569,7 @@ class Puzzler(gym.Env):
             dict: Info with distance between agent and target
         """
         return {
-            "partial_assembly": self._render_assembly(),
+            "assembly": self.render(),
             "num_pieces": self.num_pieces,
             "remaining_pieces": self.remaining_pieces,
             "total_eligible_edges": len(
@@ -577,6 +579,11 @@ class Puzzler(gym.Env):
             "total_similarities": len(self.edge_similarities),
             "grid_size": self.grid.shape
         }
+
+    def render(self):
+        if self.render_mode == "rgb_array":
+            return self._render_assembly()
+        return None
 
     def reset(self, seed=None, options=None):
         """Start a new episode by randomly selecing a new puzzle.

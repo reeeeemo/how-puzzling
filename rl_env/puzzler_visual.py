@@ -49,6 +49,9 @@ def main():
     parser.add_argument("--use-model",
                         action="store_true",
                         help="use trained RL model")
+    parser.add_argument("--record_path",
+                        type=str,
+                        help="path to record .mp4 video to")
     args = parser.parse_args()
 
     project_path = Path(__file__).resolve().parent.parent
@@ -68,10 +71,11 @@ def main():
     # that it was trained on
     puzzler = gym.make(
         "puzzler-v0",
-        images=images[:6],
+        images=images[:5],
         seg_model_path=model_path,
         max_steps=100,
-        device=DEVICE
+        device=DEVICE,
+        render_mode="rgb_array"
     )
     puzzler = Monitor(puzzler)
     puzzler = DummyVecEnv([lambda: puzzler])
@@ -92,6 +96,17 @@ def main():
     x, y = 0, 0
     grid_size_h = puzzler.get_attr("grid_h")[0]
     i = 0
+
+    height, width, _ = puzzler.render().shape
+
+    # init recording, only go trough one puzzle
+    if args.record_path:
+        video_path = Path(args.record_path)
+        video_path.parent.mkdir(parents=True, exist_ok=True)
+        out = cv2.VideoWriter(
+            str(video_path),
+            cv2.VideoWriter_fourcc(*"H264"), 2, (width, height)
+        )
 
     # if no model:
     # take from all available pieces so we don't accidently truncate
@@ -114,27 +129,36 @@ def main():
             print(f"reward at step {i}: {rewards[0]}")
             new_info = {
                 k: v for k, v in infos[0].items()
-                if k != "partial_assembly"
+                if k != "assembly"
             }
             print(f"INFO: {new_info}")
+            frame = infos[0]["assembly"]
+
+            if args.record_path:
+                out.write(frame)
 
             if infos[0]["TimeLimit.truncated"]:
                 print(f"\n\nPuzzler reset at step {i}.\n\n")
                 available_pids = np.where(obs["valid_pieces"] == 1)[0]
                 i += 1
                 x, y = 0, 0
+                if args.record_path:
+                    break
                 continue
             if dones[0]:
                 print(f"\n\nPuzzler finished at step {i}.\n\n")
-                cv2.imshow("final placed img", infos[0]["partial_assembly"])
+                cv2.imshow("final placed img", frame)
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
                 i += 1
                 x, y = 0, 0
+                if args.record_path:
+                    break
                 continue
 
             available_pids = np.where(obs["valid_pieces"] == 1)[0]
-            cv2.imshow("new placed img", infos[0]["partial_assembly"])
+
+            cv2.imshow("new placed img", frame)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -152,9 +176,14 @@ def main():
             print(f"reward at step {i}: {reward}")
             new_info = {
                 k: v for k, v in infos[0].items()
-                if k != "partial_assembly"
+                if k != "assembly"
             }
             print(f"INFO: {new_info}")
+
+            frame = infos[0]["assembly"]
+
+            if args.record_path:
+                out.write(frame)
 
             if infos[0]["TimeLimit.truncated"]:
                 print(f"\n\nPuzzler reset at step {i}.\n\n")
@@ -164,7 +193,7 @@ def main():
                 continue
             if dones[0]:
                 print(f"\n\nPuzzler finished at step {i}.\n\n")
-                cv2.imshow("final placed img", infos[0]["partial_assembly"])
+                cv2.imshow("final placed img", frame)
                 cv2.waitKey(0)
                 cv2.destroyAllWindows()
                 i += 1
@@ -172,7 +201,7 @@ def main():
                 continue
 
             available_pids = np.where(obs["valid_pieces"] == 1)[0]
-            cv2.imshow("new placed img", infos[0]["partial_assembly"])
+            cv2.imshow("new placed img", frame)
             cv2.waitKey(0)
             cv2.destroyAllWindows()
 
@@ -181,6 +210,10 @@ def main():
                 y = 0
                 x += 1
             i += 1
+
+    if args.record_path:
+        out.release()
+    puzzler.close()
 
 
 if __name__ == "__main__":
