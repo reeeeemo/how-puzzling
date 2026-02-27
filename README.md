@@ -15,7 +15,7 @@ I have listed all experiments in `.md` files across each of the folders of this 
 
 - [Dataset Creation via Model-Based Segmentation](./dataset/DATASET_CREATION.md)
 - [Custom Edge Similarity Metrics](./similarity/SIMILARITY_CALCULATION.md)
-- [Reinforcement-Learning Guided Assembly](./rl_env/RL_CREATION.md) -- **WIP as I am still training models and tuning the reward function**
+- [Reinforcement-Learning Guided Assembly](./rl_env/RL_CREATION.md)
 
 ## Setup
 
@@ -32,3 +32,7 @@ conda activate puzzling
 
 pip install -r requirements.txt # change pytorch ver for CUDA compatibility
 ```
+
+- [Jigsaw Puzzle Dataset](https://huggingface.co/datasets/reeeemo/jigsaw_puzzle)
+- [Trained Segmentation Model](https://huggingface.co/reeeemo/puzzle-segment-model)
+- [Trained PPO Model](https://huggingface.co/reeeemo/ppo-puzzler)
