@@ -24,7 +24,16 @@ class Puzzler(gym.Env):
 
     Given an image, find all edges and find the matching sides.
     Attributes:
-        TODO
+        max_steps (int): maximum steps model can traverse before truncation
+        device (str): whether to run models on cuda/cpu
+        model (PuzzleImageModel): custom model that compute puzzle piece, edge metrics
+        render_mode (str): whether to render or not
+        images (list[np.ndarray]): list of all puzzle images in environment
+        grid_w (int): puzzle grid's max x position
+        grid_h (int): puzzle grid's max y position
+        cur_steps (int): current steps taken by model in this iteration
+        action_space (Discrete): count of total actions able to be taken
+        observation_space (Dict): list of variables agent can see during RL training
     """
     metadata = {"render_modes": ["rgb_array"], "render_fps": 4}
 
@@ -113,6 +122,11 @@ class Puzzler(gym.Env):
             meta["piece_id"] = int(perm[meta["piece_id"]])
 
     def _load_puzzle(self, image: np.ndarray):
+        """Loads a new puzzle given an image.
+
+        Recalculates edge_similarities, metadata, masks,
+        and piece features.
+        """
         self.target_image = image.copy()
         results, similarities, edges_metadata = self.model([self.target_image])
 

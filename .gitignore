@@ -8,6 +8,7 @@ model/*
 
 # in case a video recordin gets caught
 *.mp4
+!dataset/results_videos/*
 
 # Byte-compiled / optimized / DLL files
 __pycache__/

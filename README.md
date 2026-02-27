@@ -1,5 +1,7 @@
 # How Puzzling!
 
+![Puzzle Reconstruction Video](./dataset/results_videos/replay.mp4)
+
 Automated reconstruction of interlocking jigsaw puzzles using modern vision and reinforcement learning.
 
 This is my MSc capstone project at the University of Colorado Boulder: a culmination of my work in computer vision and machine learning.
