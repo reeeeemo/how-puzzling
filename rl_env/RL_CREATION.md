@@ -5,10 +5,10 @@ My final leg of the automated reconstruction of jigsaw puzzles is the reinforcem
 Given an image of separated puzzle pieces, the model should be able to:
 
 **1. Segment all puzzle pieces, approximate their sides correctly, and gather metrics**
-
 2. Create a Markov Decision Process $<S, A, r, P, p_0>$ for the RL model
-
 3. Train and utilize a model to successfully place the puzzle pieces at the correct coordinates as efficiently as possible.
+
+---
 
 To figure out the best model type and whether RL is feasible, I need to create an MDP for this problem. Before getting started however, I must define a set of rules whenever any model (heuristics, RL) attempts to solve a jigsaw puzzle:
 
@@ -26,7 +26,9 @@ With that in mind, I can now create an MDP.
 
 ## Markov Decision Process
 
-For this entire discussion, I will be using a 3x3 jigsaw puzzle as an example, that means 9 total pieces.
+For this entire discussion, I will be using a 3x3 jigsaw puzzle as an example, that means 9 total pieces. 
+
+> *n* and *m* will represent the puzzle piece width/height
 
 ### S
 
@@ -34,7 +36,7 @@ The set of all valid states depends on the number of puzzle pieces and grid posi
 
 This is factorial growth, since everytime the agent places a piece, the number of unique pieces and grid positions decreases by 1. Further puzzle sizes (4x4, 5x5) can grow these to even larger values. This introduces the curse of dimensionality and increases time/space complexity when using techniques like Q-Learning and DQNs.
 
-$ S = (n \cdot m)! $ where n, m are the puzzle piece width/height
+$$ S = (n \cdot m)! $$ 
 
 ### A
 
@@ -42,7 +44,7 @@ The set of all valid actions also depends on the number of puzzle pieces and gri
 
 For further puzzle sizes (4x4, 5x5), this expands to 256, 625 actions. This is a huge amount of potential actions for the agent to explore, whose performance in this situation might be increased by masking invalid actions over time.
 
-$ |A| = (n \cdot m)^2 $
+$$ |A| = (n \cdot m)^2 $$
 
 ### r
 
@@ -94,11 +96,15 @@ Originally an image of the partially reconstructed puzzle was provided, but it p
 The action space originally utilized `[pid, x, y]` as a valid action, however MaskablePPO does not support Box or Dict actions(multi-dimensional arrays) [[1]]. This lead me to create an equation for computing an action given a pid, x, and y coordinate in one array. It is found in [env_puzzler.py](./env_puzzler.py) as `action_to_coords` and `coords_to_action`:
 
 Conversion to action:
+
 $$ action = pid \cdot (width \cdot height) + x * height + y $$
 
 Conversion back to `[pid, x, y]`:
+
 $$ pid = \lfloor \frac{action}{width \cdot height} \rfloor $$
+
 $$ x = \frac{action \mod (width \cdot height)}{height} $$
+
 $$ y = (action \mod (width \cdot height)) \mod height $$ 
 
 ---
