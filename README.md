@@ -1,6 +1,9 @@
 # How Puzzling!
 
-![Puzzle Reconstruction](./dataset/results_videos/replay.gif)
+<div align="center">
+  <img src="./dataset/results_videos/replay.gif" width="640" alt="Puzzle Reconstruction Demo"/>
+</div>
+
 
 Automated reconstruction of interlocking jigsaw puzzles using modern vision and reinforcement learning.
 
